@@ -8,7 +8,7 @@
 # ============================================================================
 
 # Window size in pixels
-WIDTH, HEIGHT = 1080, 720
+WIDTH, HEIGHT = 1920, 1080
 
 # Target frames per second for the game loop
 FPS = 60

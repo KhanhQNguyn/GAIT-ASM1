@@ -31,6 +31,11 @@ def seek(pos, vel, target, max_speed):
     return desired - vel
 
 def flee(pos, vel, target, max_speed):
+    d = pos - target
+    if d.length_squared() == 0:
+        return V2()
+    desired = d.normalize() * max_speed
+    return desired - vel
     """
     Move away from a target. This is the opposite of seek.
     You need to implement the mirror of seek using direction from threat to self.
@@ -38,6 +43,19 @@ def flee(pos, vel, target, max_speed):
     raise NotImplementedError("Implement flee using the opposite of seek")
 
 def arrive(pos, vel, target, max_speed, slow_radius=ARRIVE_SLOW_RADIUS, stop_radius=ARRIVE_STOP_RADIUS):
+    d = target - pos
+    dist = d.length()
+    
+    if dist < stop_radius:
+        return -vel  # Cancel velocity to stop
+    
+    if dist < slow_radius:
+        desired_speed = max_speed * (dist / slow_radius)
+        desired_vel = d.normalize() * desired_speed
+    else:
+        desired_vel = d.normalize() * max_speed
+    
+    return desired_vel - vel
     """
     Like seek when far, but slow down near the target.
     Rules
@@ -89,17 +107,41 @@ def boids_alignment(me_vel, neighbors):
 
 # ---------------- Obstacle avoidance blend ----------------
 
-def seek_with_avoid(pos, vel, target, max_speed, radius, rects, lookahead=AVOID_LOOKAHEAD):
+def seek_with_avoid(pos, vel, target, max_speed, radius, rects):
     """
-    Seek the target but avoid obstacles by sampling angled corridors.
-    Idea
-      1. Check a straight corridor first
-      2. If blocked, rotate small angles left and right until a free path is found
-      3. Use that direction for the seek
-      4. If all blocked, apply a small braking force
-    Use circlecast_hits_any_rect to test each corridor.
+    Move towards a target, but sweep a path ahead using circle casts.
+    If the direct path is blocked, try looking left and right at increasing angles
+    until a clear path is found.
     """
-    raise NotImplementedError("Implement angled corridor search with circle casts")
+    d = target - pos
+    if d.length_squared() == 0:
+        return V2(0, 0)
+        
+    base_dir = d.normalize()
+    look_ahead = 150.0  # Tầm nhìn xa của con Rắn (khoảng cách quét)
+    
+    # Các góc lệch để kiểm tra hướng đi: ưu tiên đi thẳng (0 độ), sau đó quét từ từ sang 2 bên
+    angles_to_check = [0, -15, 15, -30, 30, -45, 45, -60, 60, -90, 90]
+    
+    for angle in angles_to_check:
+        # Tạo hướng nhìn mới bằng cách xoay hướng gốc
+        check_dir = base_dir.rotate(angle)
+        
+        # Điểm mút của tia quét
+        p1 = pos + check_dir * look_ahead
+        
+        # Dùng hàm có sẵn của Pygame / utils để quét xem đường này có bị chặn không
+        # (radius là bán kính con rắn, rects là danh sách các bức tường/vật cản)
+        hit_wall = circlecast_hits_any_rect(pos, p1, radius, rects)
+        
+        if not hit_wall:
+            # Nếu đường này thoáng (không hit_wall), ta sẽ di chuyển theo hướng này
+            desired = check_dir * max_speed
+            return desired - vel
+            
+    # Nếu bị bao vây 4 phía không còn đường thoát, ráng lách thẳng hướng cũ nhưng chậm lại
+    desired = base_dir * max_speed
+    return desired - vel
 
 # ---------------- New behaviours to be implemented ----------------
 
