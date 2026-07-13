@@ -19,6 +19,8 @@ from settings import (
     WIDTH, HEIGHT, WHITE,
     SNAKE_RADIUS, SNAKE_SPEED, AGGRO_RANGE, DEAGGRO_RANGE
 )
+from utils import draw_debug_overlay
+import debug_state
 from steering import arrive, seek, seek_with_avoid, integrate_velocity, pursue, wander_force
 
 class SnakeState(Enum):
@@ -148,3 +150,12 @@ class Snake:
         head = self.pos + V2(1, 0).rotate(self.heading_deg) * (self.radius - 2)
         pygame.draw.circle(surf, (30, 30, 30), head, 3)
         pygame.draw.circle(surf, WHITE, head, 5, 1)
+        
+        # Debug overlay when enabled
+        if debug_state.DEBUG:
+            # Draw velocity vector, AGGRO_RANGE and DEAGGRO_RANGE, and state name
+            perception_radii = [
+                (AGGRO_RANGE, (255, 100, 100)),    # red for aggro range
+                (DEAGGRO_RANGE, (100, 100, 255))   # blue for deaggro range
+            ]
+            draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)

@@ -19,7 +19,8 @@ from settings import (
     FLY_RADIUS, FLY_SPEED, NEIGHBOR_RADIUS,
     SEP_WEIGHT, COH_WEIGHT, ALI_WEIGHT, ANCHOR_WEIGHT
 )
-from utils import limit
+from utils import limit, draw_debug_overlay
+import debug_state
 from steering import (
     boids_separation, boids_cohesion, boids_alignment,
     flee, evade, wander_force
@@ -117,11 +118,10 @@ class Fly:
                     neighbors.append((f.pos, f.vel))
 
             # TODO: compute boids forces
-            # sep = boids_separation(self.pos, neighbors, sep_radius=50.0)
-            # coh = boids_cohesion(self.pos, neighbors)
-            # ali = boids_alignment(self.vel, neighbors)
-            # force = sep * SEP_WEIGHT + coh * COH_WEIGHT + ali * ALI_WEIGHT
-            force = V2()
+            sep = boids_separation(self.pos, neighbors, sep_radius=50.0)
+            coh = boids_cohesion(self.pos, neighbors)
+            ali = boids_alignment(self.vel, neighbors)
+            force = sep * SEP_WEIGHT + coh * COH_WEIGHT + ali * ALI_WEIGHT
 
             # Gentle anchor toward arena center to avoid drifting out of bounds
             center = V2(bounds_rect.centerx, bounds_rect.centery)
@@ -166,3 +166,9 @@ class Fly:
     def draw(self, surf):
         color = YELLOW if self.state in (FlyState.Flock, FlyState.Idle) else PURPLE
         pygame.draw.circle(surf, color, self.pos, self.radius)
+        
+        # Debug overlay when enabled
+        if debug_state.DEBUG:
+            # Draw velocity vector, NEIGHBOR_RADIUS perception, and state name
+            perception_radii = [(NEIGHBOR_RADIUS, (100, 200, 255))]
+            draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)

@@ -1,0 +1,1107 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+entities/
+  fly.py
+  frog.py
+  snake.py
+main.py
+settings.py
+steering.py
+utils.py
+world.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="entities/fly.py">
+# ============================================================================
+# fly.py
+# Purpose
+#   Autonomous flocking agent with a small FSM.
+#   States: Flock, Fleeing, Idle.
+#   Flock uses boids separation, cohesion, alignment.
+#   Fleeing uses flee or the new evade behavior.
+#   Idle uses a gentle wander to drift when far from danger.
+# Update order
+#   Compute state transitions from triggers, then apply the behavior for state.
+# ============================================================================
+
+import random
+from enum import Enum, auto
+import pygame
+from pygame.math import Vector2 as V2
+from settings import (
+    WIDTH, HEIGHT, WHITE, YELLOW, PURPLE,
+    FLY_RADIUS, FLY_SPEED, NEIGHBOR_RADIUS,
+    SEP_WEIGHT, COH_WEIGHT, ALI_WEIGHT, ANCHOR_WEIGHT
+)
+from utils import limit
+from steering import (
+    boids_separation, boids_cohesion, boids_alignment,
+    flee, evade, wander_force
+)
+
+class FlyState(Enum):
+    Flock   = auto()
+    Fleeing = auto()
+    Idle    = auto()
+
+class Fly:
+    def __init__(self, pos):
+        self.pos = V2(pos)
+        self.vel = V2(random.uniform(-1, 1), random.uniform(-1, 1))
+        if self.vel.length_squared() == 0:
+            self.vel = V2(1, 0)
+        self.vel.scale_to_length(FLY_SPEED * 0.5)
+
+        self.radius = FLY_RADIUS
+        self.state = FlyState.Flock
+
+        # Timers and cached values
+        self.scare_timer = 0.0   # counts down while nervous before calming
+        self.idle_timer  = 0.0   # time spent far from frog
+        self._rng_seed   = random.randint(0, 999999)
+
+    def sense_bubbles_close(self, bubbles, r):
+        """Return True if any bubble is within range r of the fly."""
+        for b in bubbles:
+            if (b.pos - self.pos).length_squared() <= r * r:
+                return True
+        return False
+
+    def update(self, dt, flies, frog, bounds_rect, bubbles):
+        """
+        Update FSM and behavior. Flies use perception to switch states.
+        Parameters
+          flies: list of all flies for neighborhood queries
+          frog:  player agent used as a threat source
+          bounds_rect: world rectangle for anchor force and containment
+          bubbles: list of active bubbles to trigger panic
+        """
+
+        # Perception radii and timers for the FSM
+        BubbleFleeRange = 140.0      # panic if bubble comes within this range
+        StopFleeingRange = 220.0     # calm down when both frog and bubbles are beyond this
+        IdleDistance = 380.0         # far enough to consider idling
+        IdleDelay    = 2.0           # seconds of safety before entering Idle
+
+        # Triggers based on the frog and bubbles
+        dist_to_frog = (frog.pos - self.pos).length()
+        scared_by_frog   = dist_to_frog < 160.0
+        scared_by_bubble = self.sense_bubbles_close(bubbles, BubbleFleeRange)
+
+        # ---------------- FSM transitions ----------------
+        if self.state == FlyState.Flock:
+            if scared_by_frog or scared_by_bubble:
+                self.state = FlyState.Fleeing
+                self.scare_timer = 0.6
+            else:
+                # Build idle time only when calm and far
+                if dist_to_frog > IdleDistance:
+                    self.idle_timer += dt
+                    if self.idle_timer >= IdleDelay:
+                        self.state = FlyState.Idle
+                else:
+                    self.idle_timer = 0.0
+
+        elif self.state == FlyState.Fleeing:
+            calm = dist_to_frog > StopFleeingRange and not self.sense_bubbles_close(bubbles, StopFleeingRange)
+            if calm:
+                self.scare_timer -= dt
+                if self.scare_timer <= 0:
+                    self.state = FlyState.Flock
+                    self.idle_timer = 0.0
+            else:
+                self.scare_timer = 0.6
+
+        elif self.state == FlyState.Idle:
+            if scared_by_frog or scared_by_bubble:
+                self.state = FlyState.Fleeing
+                self.scare_timer = 0.6
+            elif dist_to_frog <= IdleDistance:
+                self.state = FlyState.Flock
+                self.idle_timer = 0.0
+
+        # ---------------- State behaviours ----------------
+        if self.state == FlyState.Flock:
+            # Build neighbor list for boids
+            neighbors = []
+            for f in flies:
+                if f is self:
+                    continue
+                if (f.pos - self.pos).length_squared() <= NEIGHBOR_RADIUS ** 2:
+                    neighbors.append((f.pos, f.vel))
+
+            # TODO: compute boids forces
+            sep = boids_separation(self.pos, neighbors, sep_radius=50.0)
+            coh = boids_cohesion(self.pos, neighbors)
+            ali = boids_alignment(self.vel, neighbors)
+            force = sep * SEP_WEIGHT + coh * COH_WEIGHT + ali * ALI_WEIGHT
+
+            # Gentle anchor toward arena center to avoid drifting out of bounds
+            center = V2(bounds_rect.centerx, bounds_rect.centery)
+            force += (center - self.pos) * ANCHOR_WEIGHT * 0.002
+
+            # Integrate velocity
+            self.vel += limit(force, 240.0) * dt
+
+        elif self.state == FlyState.Fleeing:
+            # TODO: replace simple flee with predictive evade for extra credit
+            # force = evade(self.pos, self.vel, frog.pos, frog.vel, FLY_SPEED)
+            force = flee(self.pos, self.vel, frog.pos, FLY_SPEED)
+
+            # Anchor blend so the group does not disappear off screen
+            center = V2(bounds_rect.centerx, bounds_rect.centery)
+            force += (center - self.pos) * ANCHOR_WEIGHT * 0.002
+
+            self.vel += limit(force, 340.0) * dt
+
+        elif self.state == FlyState.Idle:
+            # TODO: use wander_force to provide gentle drifting
+            # force = wander_force(self.vel, rng_seed=self._rng_seed)
+            force = V2()
+            self.vel += limit(force, 120.0) * dt
+            self.vel *= 0.98  # mild damping so idle feels soft
+
+        # Speed clamp and position integrate
+        if self.vel.length() > FLY_SPEED:
+            self.vel.scale_to_length(FLY_SPEED)
+        self.pos += self.vel * dt
+
+        # Soft containment inside arena
+        if self.pos.x < self.radius:
+            self.pos.x = self.radius; self.vel.x *= -0.4
+        if self.pos.x > WIDTH - self.radius:
+            self.pos.x = WIDTH - self.radius; self.vel.x *= -0.4
+        if self.pos.y < self.radius:
+            self.pos.y = self.radius; self.vel.y *= -0.4
+        if self.pos.y > HEIGHT - self.radius:
+            self.pos.y = HEIGHT - self.radius; self.vel.y *= -0.4
+
+    def draw(self, surf):
+        color = YELLOW if self.state in (FlyState.Flock, FlyState.Idle) else PURPLE
+        pygame.draw.circle(surf, color, self.pos, self.radius)
+</file>
+
+<file path="entities/frog.py">
+# ============================================================================
+# frog.py
+# Purpose
+#   Player controlled agent. Moves with Arrive. Shoots bubbles.
+#   Holds a short Hurt state for temporary invulnerability after damage.
+# Update order
+#   Compute steering, integrate velocity with dt, clamp to bounds, update bubbles.
+# Drawing
+#   Draw the frog body and a simple eye that points in the facing direction.
+# ============================================================================
+
+import time
+import pygame
+from pygame.math import Vector2 as V2
+from settings import (
+    WIDTH, HEIGHT, WHITE, GREEN, BLUE,
+    FROG_RADIUS, FROG_SPEED,
+    BUBBLE_RADIUS, BUBBLE_SPEED, BUBBLE_LIFETIME,
+    HURT_INVULN
+)
+from utils import clamp
+from steering import arrive, integrate_velocity
+
+class Bubble:
+    """
+    Simple projectile that moves in a straight line and pops after a short time.
+    You can destroy it early when it hits a snake or an obstacle.
+    """
+    def __init__(self, pos, dir_vec):
+        self.pos = V2(pos)
+        self.vel = (dir_vec.normalize() if dir_vec.length_squared() > 0 else V2(1, 0)) * BUBBLE_SPEED
+        self.birth = time.time()
+        self.alive = True
+
+    def update(self, dt):
+        self.pos += self.vel * dt
+        if time.time() - self.birth > BUBBLE_LIFETIME:
+            self.alive = False
+
+    def draw(self, surf):
+        pygame.draw.circle(surf, BLUE, self.pos, BUBBLE_RADIUS)
+        pygame.draw.circle(surf, WHITE, self.pos, BUBBLE_RADIUS, 2)
+
+class Frog:
+    def __init__(self, pos):
+        self.pos = V2(pos)
+        self.vel = V2()
+        self.target = V2(pos)
+        self.radius = FROG_RADIUS
+        self.speed = FROG_SPEED
+        self.facing = V2(1, 0)   # used to aim bubbles when frog is not moving
+        self.bubbles = []
+
+        # Hurt state setup. When hurt_timer > 0 the frog cannot be hit again.
+        self.hurt_timer = 0.0
+
+    def set_target(self, p):
+        """Set a new target the frog will move toward using Arrive."""
+        self.target = V2(p)
+
+    def shoot(self):
+        """Spawn a bubble just in front of the frog, moving along the facing direction."""
+        dir_vec = self.vel if self.vel.length_squared() > 1 else self.facing
+        origin = self.pos + dir_vec.normalize() * (self.radius + 6)
+        self.bubbles.append(Bubble(origin, dir_vec))
+
+    def start_hurt(self):
+        """Begin the invulnerability window after damage."""
+        if self.hurt_timer <= 0:
+            self.hurt_timer = HURT_INVULN
+
+    def can_be_hurt(self):
+        """Return True if the frog can take damage right now."""
+        return self.hurt_timer <= 0
+
+    def update(self, dt):
+        # Compute steering with Arrive
+        steer = arrive(self.pos, self.vel, self.target, self.speed)
+
+        # Integrate velocity with dt and clamp to max speed
+        self.vel = integrate_velocity(self.vel, steer, dt, self.speed)
+
+        # Move the frog
+        self.pos += self.vel * dt
+
+        # Face in the direction of motion when moving
+        if self.vel.length_squared() > 16:
+            self.facing = self.vel.normalize()
+
+        # Keep inside bounds
+        self.pos.x = clamp(self.pos.x, self.radius, WIDTH - self.radius)
+        self.pos.y = clamp(self.pos.y, self.radius, HEIGHT - self.radius)
+
+        # Update bubbles and remove popped ones
+        for b in list(self.bubbles):
+            b.update(dt)
+            if not b.alive:
+                self.bubbles.remove(b)
+
+        # Count down invulnerability
+        if self.hurt_timer > 0:
+            self.hurt_timer -= dt
+
+    def draw(self, surf):
+        # Flash while hurt. This provides player feedback and helps debugging.
+        color = GREEN
+        if self.hurt_timer > 0:
+            t = int(pygame.time.get_ticks() * 0.01) % 2
+            color = (220, 220, 220) if t == 0 else (160, 160, 160)
+
+        # Body
+        pygame.draw.circle(surf, color, self.pos, self.radius)
+
+        # Eye looks in facing direction
+        eye = self.pos + self.facing * (self.radius - 4)
+        pygame.draw.circle(surf, WHITE, eye, 5)
+        pygame.draw.circle(surf, (30, 30, 30), eye, 2)
+
+        # Bubbles
+        for b in self.bubbles:
+            b.draw(surf)
+</file>
+
+<file path="entities/snake.py">
+# ============================================================================
+# snake.py
+# Purpose
+#   Predator agent with a five-state FSM.
+#   States: PatrolAway, PatrolHome, Aggro, Harmless, Confused.
+#   Aggro chases the frog. Harmless returns home after pacification.
+#   Confused wanders briefly after reaching home, then resumes patrol.
+# Update order
+#   Evaluate transitions first, then run the behavior for the active state.
+# Drawing
+#   Simple circle with a tiny eye that turns toward the current velocity.
+# ============================================================================
+
+from enum import Enum, auto
+import math, random
+import pygame
+from pygame.math import Vector2 as V2
+from settings import (
+    WIDTH, HEIGHT, WHITE,
+    SNAKE_RADIUS, SNAKE_SPEED, AGGRO_RANGE, DEAGGRO_RANGE
+)
+from steering import arrive, seek, seek_with_avoid, integrate_velocity, pursue, wander_force
+
+class SnakeState(Enum):
+    PatrolAway = auto()
+    PatrolHome = auto()
+    Aggro      = auto()
+    Harmless   = auto()
+    Confused   = auto()
+
+class Snake:
+    def __init__(self, pos, patrol_point, rects):
+        # Motion and shape
+        self.pos = V2(pos)
+        self.vel = V2(1, 0)
+        self.radius = SNAKE_RADIUS
+        self.speed = SNAKE_SPEED
+
+        # Home base and patrol destination
+        self.home = V2(pos)
+        self.patrol_point = V2(patrol_point)
+
+        # Initial state
+        self.state = SnakeState.PatrolAway
+
+        # Obstacles for avoidance
+        self.rects = rects
+
+        # Drawing hint for head direction
+        self.heading_deg = 0.0
+
+        # Color varies by state for quick visual debug
+        self.color = (190, 130, 110)
+
+        # Confused state timer
+        self.confused_timer = 0.0
+
+        # RNG for wander if needed
+        self._rng_seed = random.randint(0, 999999)
+
+    def set_state(self, st):
+        """Switch to a new FSM state."""
+        self.state = st
+
+    def update(self, dt, frog):
+        """
+        Update state transitions based on distance to frog and timers.
+        Then compute a steering force for the active state and integrate motion.
+        """
+
+        # Distance to frog for transitions
+        dist = (frog.pos - self.pos).length()
+
+        # ---------------- FSM transitions ----------------
+        if self.state == SnakeState.Aggro:
+            if dist > DEAGGRO_RANGE:
+                self.set_state(SnakeState.PatrolHome)
+
+        elif self.state in (SnakeState.PatrolHome, SnakeState.PatrolAway):
+            if dist < AGGRO_RANGE:
+                self.set_state(SnakeState.Aggro)
+
+        elif self.state == SnakeState.Harmless:
+            # When harmless snake reaches home, enter Confused briefly then resume patrol
+            if (self.home - self.pos).length() < 12:
+                self.confused_timer = 1.5  # seconds of confusion
+                self.set_state(SnakeState.Confused)
+
+        elif self.state == SnakeState.Confused:
+            self.confused_timer -= dt
+            if self.confused_timer <= 0:
+                self.set_state(SnakeState.PatrolAway)
+
+        # ---------------- State behaviours ----------------
+        if self.state == SnakeState.Aggro:
+            self.color = (255, 150, 150)
+            # TODO: replace seek with pursue for smarter interception
+            # steer = pursue(self.pos, self.vel, frog.pos, frog.vel, self.speed)
+            steer = seek(self.pos, self.vel, frog.pos, self.speed)
+            # Light avoidance to reduce obstacle collisions while aggro
+            steer += seek_with_avoid(self.pos, self.vel, frog.pos, self.speed, self.radius, self.rects) * 0.25
+
+        elif self.state == SnakeState.PatrolAway:
+            self.color = (180, 200, 255)
+            steer = arrive(self.pos, self.vel, self.patrol_point, self.speed)
+            if (self.patrol_point - self.pos).length() < 10:
+                self.set_state(SnakeState.PatrolHome)
+            steer += seek_with_avoid(self.pos, self.vel, self.patrol_point, self.speed, self.radius, self.rects) * 0.25
+
+        elif self.state == SnakeState.PatrolHome:
+            self.color = (180, 220, 180)
+            steer = arrive(self.pos, self.vel, self.home, self.speed)
+            if (self.home - self.pos).length() < 10:
+                self.set_state(SnakeState.PatrolAway)
+            steer += seek_with_avoid(self.pos, self.vel, self.home, self.speed, self.radius, self.rects) * 0.25
+
+        elif self.state == SnakeState.Harmless:
+            self.color = (190, 180, 255)
+            steer = arrive(self.pos, self.vel, self.home, self.speed * 0.9)
+            steer += seek_with_avoid(self.pos, self.vel, self.home, self.speed, self.radius, self.rects) * 0.25
+
+        else:  # Confused
+            self.color = (245, 210, 160)
+            # TODO: use wander_force for a gentle random walk during confusion
+            # steer = wander_force(self.vel, rng_seed=self._rng_seed)
+            steer = V2()
+
+        # Integrate velocity and update position
+        self.vel = integrate_velocity(self.vel, steer, dt, self.speed)
+        self.pos += self.vel * dt
+
+        # Smooth eye heading based on velocity
+        spd = self.vel.length()
+        if spd > 4:
+            def lerp(a, b, t): return a + (b - a) * t
+            self.heading_deg = lerp(self.heading_deg, math.degrees(math.atan2(self.vel.y, self.vel.x)), 0.15)
+
+        # Keep inside arena
+        if self.pos.x < self.radius: self.pos.x = self.radius
+        if self.pos.x > WIDTH - self.radius: self.pos.x = WIDTH - self.radius
+        if self.pos.y < self.radius: self.pos.y = self.radius
+        if self.pos.y > HEIGHT - self.radius: self.pos.y = HEIGHT - self.radius
+
+    def draw(self, surf):
+        # Body
+        pygame.draw.circle(surf, self.color, self.pos, self.radius)
+        # Simple eye in heading direction
+        head = self.pos + V2(1, 0).rotate(self.heading_deg) * (self.radius - 2)
+        pygame.draw.circle(surf, (30, 30, 30), head, 3)
+        pygame.draw.circle(surf, WHITE, head, 5, 1)
+</file>
+
+<file path="main.py">
+# ============================================================================
+# main.py
+# Purpose
+#   Entry point and game loop. Handles input, updates agents, and draws frames.
+# Mental model
+#   Each frame: measure dt, process input, update world and agents, draw UI.
+#   Agents do not draw themselves until update is finished for the frame.
+# Controls
+#   Left click sets a target for the frog. Space shoots a bubble. R restarts.
+# ============================================================================
+
+import sys, random
+import pygame
+from settings import *
+from utils import draw_grid
+from world import World
+from entities.frog import Frog
+from entities.fly import Fly
+from entities.snake import Snake
+
+def main():
+    # Initialize Pygame and create a window and a clock
+    pygame.init()
+    pygame.display.set_caption("Frog, Flies, and Snakes")
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    clock = pygame.time.Clock()
+
+    # Fonts for text and overlay
+    font = pygame.font.SysFont("consolas", 22)
+    bigfont = pygame.font.SysFont("consolas", 48, bold=True)
+
+    def reset():
+        """
+        Create a fresh world and agents. Called at start and when the player restarts.
+        Returns a tuple of (world, frog, flies, snakes).
+        """
+        world = World(WIDTH, HEIGHT)
+        frog = Frog((WIDTH * 0.5, HEIGHT * 0.5))
+
+        # Randomly scatter flies inside the world bounds
+        flies = [Fly((random.randint(60, WIDTH - 60), random.randint(60, HEIGHT - 60)))
+                 for _ in range(NUM_FLIES)]
+
+        # Create snakes with patrol points mirrored across the screen
+        snakes = []
+        for i in range(NUM_SNAKES):
+            px = 140 + i * 320
+            py = 120 if i % 2 == 0 else HEIGHT - 140
+            patrol = (WIDTH - px, HEIGHT - py)
+            snakes.append(Snake((px, py), patrol, world.obstacles))
+
+        return world, frog, flies, snakes
+
+    # Build initial state
+    world, frog, flies, snakes = reset()
+
+    # Game state for health, scoring, and endings
+    health = START_HEALTH
+    fly_count = 0
+    game_over = False
+    win = False
+
+    running = True
+    while running:
+        # ---------------- Measure dt ----------------
+        # Convert milliseconds to seconds for frame rate independent movement
+        dt = clock.tick(FPS) / 1000.0
+
+        # ---------------- Input ----------------
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
+                running = False
+
+            if e.type == pygame.KEYDOWN:
+                if e.key == pygame.K_ESCAPE:
+                    running = False
+
+                if not game_over and e.key == pygame.K_SPACE:
+                    # Space shoots a bubble from the frog mouth
+                    frog.shoot()
+
+                if game_over and e.key == pygame.K_r:
+                    # R restarts the whole scene
+                    world, frog, flies, snakes = reset()
+                    health = START_HEALTH
+                    fly_count = 0
+                    game_over = False
+                    win = False
+
+            if not game_over and e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                # Left click sets a new move target for the frog
+                frog.set_target(pygame.mouse.get_pos())
+
+        # ---------------- Update ----------------
+        if not game_over:
+            # Update frog first since other agents may query frog position
+            frog.update(dt)
+
+            # Update flies and check if any fly gets caught by the frog
+            for f in list(flies):
+                f.update(dt, flies, frog, world.rect, frog.bubbles)
+
+                # Eat a fly when close enough to the frog center
+                if (f.pos - frog.pos).length_squared() <= (f.radius + FROG_RADIUS) ** 2:
+                    flies.remove(f)
+                    fly_count += 1
+                    if fly_count >= FLIES_TO_WIN:
+                        game_over = True
+                        win = True
+
+            # Update snakes and their FSM decisions
+            for s in snakes:
+                s.update(dt, frog)
+
+            # ------------- Bubble hit logic -------------
+            # For each bubble and snake pair, if they overlap:
+            #   - pop the bubble
+            #   - if the snake is Aggro, switch it to Harmless or Confused
+            # This logic is left as a student task to connect FSMs and mechanics.
+            # for s in snakes:
+            #     for b in frog.bubbles:
+            #         if (b.pos - s.pos).length_squared() <= (BUBBLE_RADIUS + s.radius) ** 2:
+            #             # if s.state == SnakeState.Aggro: s.set_state(SnakeState.Harmless)
+            #             # optional: on going harmless to home, then Confused for a short time
+            #             b.alive = False
+
+            # ------------- Damage logic -------------
+            # Only Aggro snakes should damage the frog.
+            # Use frog.can_be_hurt() to avoid multiple hits in a row.
+            # After a hit, reduce health and optionally pacify the snake.
+            # for s in snakes:
+            #     if s.state == SnakeState.Aggro and (s.pos - frog.pos).length_squared() <= (s.radius + FROG_RADIUS) ** 2:
+            #         if frog.can_be_hurt():
+            #             health -= 1
+            #             frog.start_hurt()
+            #             s.set_state(SnakeState.Harmless)
+            #             if health <= 0:
+            #                 game_over = True
+            #                 win = False
+
+        # ---------------- Draw ----------------
+        screen.fill(BG)           # clear background
+        draw_grid(screen)         # draw a soft grid
+        world.draw(screen)        # draw obstacles
+
+        for f in flies:           # draw flies
+            f.draw(screen)
+        for s in snakes:          # draw snakes
+            s.draw(screen)
+        frog.draw(screen)         # draw frog and bubbles
+
+        # Draw hearts for health
+        for i in range(START_HEALTH):
+            cx = 16 + i * 26
+            cy = 18
+            col = RED if i < health else (80, 60, 60)
+            pygame.draw.circle(screen, col, (cx, cy), 10)
+        pygame.draw.circle(screen, col, (cx + 12, cy), 10)
+        points = [(cx - 6, cy + 2), (cx + 18, cy + 2), (cx + 6, cy + 18)]
+        pygame.draw.polygon(screen, col, points)
+
+        # Draw fly counter and control hint
+        txt = font.render(f"Flies: {fly_count}/{FLIES_TO_WIN}", True, (240, 240, 240))
+        screen.blit(txt, (16, 42))
+        tips = font.render("Click to move, Space to bubble, R to restart", True, MUTED)
+        screen.blit(tips, (16, 68))
+
+        # If game over, dim the screen and show a message
+        if game_over:
+            shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            shade.fill((0, 0, 0, 160))
+            screen.blit(shade, (0, 0))
+            msg = "You won!" if win else "You died!"
+            col = (90, 220, 120) if win else RED
+            text = bigfont.render(msg, True, col)
+            hint = font.render("Press R to restart", True, (240, 240, 240))
+            rect = text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 10))
+            screen.blit(text, rect)
+            screen.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 44)))
+
+        # Present the frame
+        pygame.display.flip()
+
+    # Clean shutdown
+    pygame.quit()
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="utils.py">
+# ============================================================================
+# utils.py
+# Purpose
+#   Small helper functions that do not belong to a specific agent.
+#   Drawing helpers and collision checks live here.
+# Notes
+#   None of these helpers should change game rules or AI decisions.
+# ============================================================================
+
+import pygame
+from pygame.math import Vector2 as V2
+from settings import WIDTH, HEIGHT
+
+# A soft grid color for the background
+GRID = (36, 42, 48)
+
+def draw_grid(surf):
+    """
+    Draw a light grid to help the eye judge motion and distance.
+    The grid has no effect on gameplay. It is only visual.
+    """
+    gap = 36  # distance between grid lines
+    # Draw vertical lines
+    for x in range(0, WIDTH, gap):
+        pygame.draw.line(surf, GRID, (x, 0), (x, HEIGHT))
+    # Draw horizontal lines
+    for y in range(0, HEIGHT, gap):
+        pygame.draw.line(surf, GRID, (0, y), (WIDTH, y))
+
+def clamp(x, a, b):
+    """Limit a scalar value x so it stays between a and b inclusive."""
+    return max(a, min(b, x))
+
+def limit(v, max_len):
+    """
+    Limit a vector length.
+    If v is longer than max_len, scale it down to exactly max_len.
+    """
+    if v.length_squared() > max_len * max_len:
+        v.scale_to_length(max_len)
+    return v
+
+def nearest_point_on_rect(point, rect):
+    """Return the closest point on an axis aligned rectangle to a given point."""
+    x = clamp(point.x, rect.left, rect.right)
+    y = clamp(point.y, rect.top, rect.bottom)
+    return V2(x, y)
+
+def circle_rect_intersect(center, radius, rect):
+    """Return True if a circle touches or overlaps a rectangle."""
+    np = nearest_point_on_rect(center, rect)
+    return (center - np).length_squared() <= radius * radius
+
+def segment_circlecast_hits_rect(p0, p1, radius, rect, step=6.0):
+    """
+    Approximate a circle cast along a line from p0 to p1.
+    We sample points along the segment and test a circle intersect at each step.
+    """
+    d = p1 - p0
+    length = d.length()
+    if length == 0:
+        return circle_rect_intersect(p0, radius, rect)
+    n = max(1, int(length / step))
+    for i in range(n + 1):
+        t = i / n
+        pos = p0 + d * t
+        if circle_rect_intersect(pos, radius, rect):
+            return True
+    return False
+
+def circlecast_hits_any_rect(p0, p1, radius, rects, step=6.0):
+    """Return True if the swept circle between p0 and p1 hits any rect in the list."""
+    for r in rects:
+        if segment_circlecast_hits_rect(p0, p1, radius, r, step):
+            return True
+    return False
+</file>
+
+<file path="world.py">
+# ============================================================================
+# world.py
+# Purpose
+#   Build the arena and a list of rectangular obstacles.
+#   Obstacles are static and are used by the snake for avoidance checks.
+# Why rectangles
+#   Rectangles are easy to draw and fast to test against with our helpers.
+# ============================================================================
+
+import random
+import pygame
+
+class World:
+    def __init__(self, width, height):
+        # Whole world bounds as a pygame.Rect for convenience
+        self.rect = pygame.Rect(0, 0, width, height)
+
+        # Container that holds all blocking rectangles
+        self.obstacles = []
+
+        # Build a reproducible obstacle set
+        self._build_obstacles(width, height)
+
+    def _build_obstacles(self, w, h):
+        """Create a few rectangles with a fixed random seed for reproducibility."""
+        rng = random.Random(9)
+        for _ in range(9):
+            ww = rng.randint(80, 180)
+            hh = rng.randint(60, 140)
+            x = rng.randint(40, w - ww - 40)
+            y = rng.randint(40, h - hh - 40)
+            rect = pygame.Rect(x, y, ww, hh)
+            self.obstacles.append(rect)
+
+    def draw(self, surf):
+        """Render each obstacle with a fill and a subtle outline."""
+        for r in self.obstacles:
+            pygame.draw.rect(surf, (70, 85, 95), r, border_radius=10)
+            pygame.draw.rect(surf, (110, 130, 145), r, 2, border_radius=10)
+</file>
+
+<file path="settings.py">
+# ============================================================================
+# settings.py
+# Purpose
+#   Central place for all constants and tuning values.
+#   You can tweak speeds, radii, and counts here without touching logic.
+# Reading guide
+#   Each variable has a short note so you know what it controls.
+# ============================================================================
+
+# Window size in pixels
+WIDTH, HEIGHT = 1920, 1080
+
+# Target frames per second for the game loop
+FPS = 60
+
+# Colors as RGB tuples. Used by drawing code for the UI and agents.
+BG    = (28, 33, 38)     # background color
+WHITE = (240, 240, 240)  # text and highlights
+GREEN = (90, 220, 120)   # frog color
+BLUE  = (120, 180, 250)  # bubble color
+YELLOW= (250, 225, 120)  # fly color when flocking or idle
+PURPLE= (185, 120, 250)  # fly color when fleeing
+RED   = (232, 88, 88)    # health hearts
+MUTED = (180, 188, 196)  # hint text
+
+# Frog setup
+FROG_RADIUS = 16          # draw size and collision size for the frog
+FROG_SPEED  = 200.0       # top speed for the frog in pixels per second
+HURT_INVULN = 1.0         # seconds of temporary invulnerability after damage
+
+# Bubble setup
+BUBBLE_RADIUS   = 8       # visual radius and collision radius
+BUBBLE_SPEED    = 380.0   # how fast the bubble travels
+BUBBLE_LIFETIME = 2.0     # seconds before the bubble pops automatically
+
+# Fly setup
+NUM_FLIES = 30           # how many flies spawn
+FLY_RADIUS = 8            # fly draw and collision radius
+FLY_SPEED  = 120.0        # fly max speed
+
+# Boids neighborhood and weights
+# These determine how flies react to neighbors
+NEIGHBOR_RADIUS = 120.0   # how far a fly considers other flies as neighbors
+SEP_RADIUS      = 50.0    # separation threshold distance
+SEP_WEIGHT      = 1.9     # weight for separation force
+COH_WEIGHT      = 0.9     # weight for cohesion force
+ALI_WEIGHT      = 0.8     # weight for alignment force
+ANCHOR_WEIGHT   = 0.6     # small pull to arena center to keep flock on screen
+
+# Arrive behavior
+# Slow inside slow radius and stop inside stop radius
+ARRIVE_SLOW_RADIUS = 120.0
+ARRIVE_STOP_RADIUS = 8.0
+
+# Snake setup
+NUM_SNAKES  = 3
+SNAKE_RADIUS = 18
+SNAKE_SPEED  = 160.0
+
+# Snake perception ranges for FSM transitions
+AGGRO_RANGE   = 260.0     # start chasing when frog gets this close
+DEAGGRO_RANGE = 360.0     # stop chasing when frog moves this far
+
+# Obstacle avoidance tuning
+AVOID_LOOKAHEAD       = 260.0   # how far the snake looks ahead when checking a corridor
+AVOID_ANGLE_INCREMENT = 12      # degrees to rotate per step when searching for a free path
+AVOID_MAX_ANGLE       = 84      # maximum deviation to try on either side
+
+# Game rules
+START_HEALTH = 3                 # how many hits the frog can take
+FLIES_TO_WIN = 10                # win condition counter
+</file>
+
+<file path="steering.py">
+# ============================================================================
+# steering.py
+# Purpose
+#   Implement all steering behaviours here. Each function computes a steering
+#   force vector. Entities apply that force to their velocity each frame.
+# Key idea
+#   desired_velocity minus current_velocity gives the steering force.
+#   Use dt in update loops when integrating velocity to keep motion consistent.
+# ============================================================================
+
+import math
+from numpy import diff
+from pygame.math import Vector2 as V2
+from utils import limit, circlecast_hits_any_rect
+from settings import (
+    ARRIVE_SLOW_RADIUS, ARRIVE_STOP_RADIUS,
+    AVOID_LOOKAHEAD, AVOID_ANGLE_INCREMENT, AVOID_MAX_ANGLE
+)
+
+# ---------------- Base behaviours ----------------
+
+def seek(pos, vel, target, max_speed):
+    """
+    Move toward a target. Returns a steering force.
+    desired = direction_to_target * max_speed
+    steering = desired - current_velocity
+    """
+    d = target - pos
+    if d.length_squared() == 0:
+        return V2()
+    desired = d.normalize() * max_speed
+    return desired - vel
+
+def flee(pos, vel, target, max_speed):
+    d = pos - target
+    if d.length_squared() == 0:
+        return V2()
+    desired = d.normalize() * max_speed
+    return desired - vel
+    """
+    Move away from a target. This is the opposite of seek.
+    You need to implement the mirror of seek using direction from threat to self.
+    """
+    raise NotImplementedError("Implement flee using the opposite of seek")
+
+def arrive(pos, vel, target, max_speed, slow_radius=ARRIVE_SLOW_RADIUS, stop_radius=ARRIVE_STOP_RADIUS):
+    d = target - pos
+    dist = d.length()
+    
+    if dist < stop_radius:
+        return -vel  # Cancel velocity to stop
+    
+    if dist < slow_radius:
+        desired_speed = max_speed * (dist / slow_radius)
+        desired_vel = d.normalize() * desired_speed
+    else:
+        desired_vel = d.normalize() * max_speed
+    
+    return desired_vel - vel
+    """
+    Like seek when far, but slow down near the target.
+    Rules
+      If distance < stop_radius, return a force that cancels leftover velocity
+      If distance < slow_radius, scale desired speed by distance / slow_radius
+      Otherwise use full speed
+    This should remove overshoot and jitter around the target.
+    """
+    raise NotImplementedError("Implement arrive with slow and stop radii")
+
+def integrate_velocity(vel, force, dt, max_speed):
+    """
+    Apply a steering force to velocity using Euler integration.
+    Then clamp to max speed and return the new velocity.
+    Use this inside agent update methods after computing steering forces.
+    """
+    vel += limit(force, 500.0) * dt
+    if vel.length() > max_speed:
+        vel.scale_to_length(max_speed)
+    return vel
+
+# ---------------- Boids components ----------------
+
+def boids_separation(me_pos, neighbors, sep_radius):
+    
+    steering = V2()
+    count = 0
+    for n_pos, n_vel in neighbors:
+        d = me_pos - n_pos
+        dist = d.length()
+        if 0 < dist < sep_radius:
+            steering += d.normalize() / dist  # Inverse proportional to distance
+            count += 1
+    if count > 0:
+        steering /= count
+        if steering.length() > 0:
+            return steering
+    return V2()
+    
+    """
+    Push away from neighbors that are too close.
+    neighbors: list of tuples (neighbor_pos, neighbor_vel)
+    Typical approach
+      For each neighbor inside sep_radius, add a vector pointing away with
+      magnitude inversely proportional to distance. Normalize at the end.
+    """
+    raise NotImplementedError("Implement boids separation")
+
+def boids_cohesion(me_pos, neighbors):
+    if not neighbors:
+        return V2()
+    avg_pos = V2()
+    for n_pos, n_vel in neighbors:
+        avg_pos += n_pos
+        
+    avg_pos /= len(neighbors)
+
+    desired = avg_pos - me_pos
+    if desired.length() > 0:
+        desired = desired.normalize()
+    return V2()
+    """
+    Pull toward the average position of neighbors.
+    Typical approach
+      Compute the center of mass of neighbors then steer toward that point.
+    """
+    raise NotImplementedError("Implement boids cohesion")
+
+def boids_alignment(me_vel, neighbors):
+    if not neighbors:
+        return V2()
+    avg_vel = V2()
+    for n_pos, n_vel in neighbors:
+        avg_vel += n_vel
+    avg_vel /= len(neighbors)
+    
+    steering = avg_vel - me_vel
+    
+    return steering * 0.1
+    """
+    Match the average velocity of neighbors.
+    Typical approach
+      Compute the average heading of neighbors then steer toward that heading.
+    """
+    raise NotImplementedError("Implement boids alignment")
+
+# ---------------- Obstacle avoidance blend ----------------
+
+def seek_with_avoid(pos, vel, target, max_speed, radius, rects):
+    """
+    Move towards a target, but sweep a path ahead using circle casts.
+    If the direct path is blocked, try looking left and right at increasing angles
+    until a clear path is found.
+    """
+    d = target - pos
+    if d.length_squared() == 0:
+        return V2(0, 0)
+        
+    base_dir = d.normalize()
+    look_ahead = 150.0  # Tầm nhìn xa của con Rắn (khoảng cách quét)
+    
+    # Các góc lệch để kiểm tra hướng đi: ưu tiên đi thẳng (0 độ), sau đó quét từ từ sang 2 bên
+    angles_to_check = [0, -15, 15, -30, 30, -45, 45, -60, 60, -90, 90]
+    
+    for angle in angles_to_check:
+        # Tạo hướng nhìn mới bằng cách xoay hướng gốc
+        check_dir = base_dir.rotate(angle)
+        
+        # Điểm mút của tia quét
+        p1 = pos + check_dir * look_ahead
+        
+        # Dùng hàm có sẵn của Pygame / utils để quét xem đường này có bị chặn không
+        # (radius là bán kính con rắn, rects là danh sách các bức tường/vật cản)
+        hit_wall = circlecast_hits_any_rect(pos, p1, radius, rects)
+        
+        if not hit_wall:
+            # Nếu đường này thoáng (không hit_wall), ta sẽ di chuyển theo hướng này
+            desired = check_dir * max_speed
+            return desired - vel
+            
+    # Nếu bị bao vây 4 phía không còn đường thoát, ráng lách thẳng hướng cũ nhưng chậm lại
+    desired = base_dir * max_speed
+    return desired - vel
+
+# ---------------- New behaviours to be implemented ----------------
+
+def pursue(pos, vel, target_pos, target_vel, max_speed):
+    """
+    Predict the future position of the target then seek that point.
+    Suggested
+      distance = |target_pos - pos|
+      time_horizon = distance / (max_speed + small_eps)
+      predicted    = target_pos + target_vel * time_horizon
+      return seek toward predicted
+    Replace simple seek in Snake Aggro with pursue for better interception.
+    """
+    raise NotImplementedError("Implement pursue with prediction")
+
+def evade(pos, vel, threat_pos, threat_vel, max_speed):
+    """
+    Predict the future position of a threat then flee from that point.
+    This is the inverse of pursue. Use the same prediction idea.
+    """
+    raise NotImplementedError("Implement evade as inverse of pursue")
+
+def wander_force(me_vel, jitter_deg=12.0, circle_distance=24.0, circle_radius=18.0, rng_seed=None):
+    """
+    Return a small random steering vector for gentle drift.
+    Classic wander
+      Project a small circle ahead along current heading, then jitter the
+      target point on that circle by a tiny random angle each update.
+    Use this for Fly Idle and Snake Confused.
+    """
+    raise NotImplementedError("Implement wander_force")
+</file>
+
+</files>

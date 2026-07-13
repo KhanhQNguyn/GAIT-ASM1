@@ -74,3 +74,38 @@ def circlecast_hits_any_rect(p0, p1, radius, rects, step=6.0):
         if segment_circlecast_hits_rect(p0, p1, radius, r, step):
             return True
     return False
+
+def draw_debug_overlay(surf, pos, vel, perception_radii, state_name=None):
+    """
+    Draw debug overlay for an entity: velocity vector, perception radii, and state name.
+    
+    Parameters:
+      surf: pygame surface to draw on
+      pos: entity position (V2)
+      vel: entity velocity (V2)
+      perception_radii: list of (radius_value, color) tuples to draw as circles
+      state_name: string name of state to render, or None to skip state text
+    """
+    # Draw velocity vector scaled by 0.3
+    if vel.length_squared() > 0.01:
+        vel_end = pos + vel * 0.3
+        pygame.draw.line(surf, (255, 100, 100), pos, vel_end, 2)
+        # Small arrow head
+        if vel.length() > 1:
+            arrow_dir = vel.normalize()
+            arrow_left = arrow_dir.rotate(150) * 6
+            arrow_right = arrow_dir.rotate(-150) * 6
+            pygame.draw.line(surf, (255, 100, 100), vel_end, vel_end + arrow_left, 1)
+            pygame.draw.line(surf, (255, 100, 100), vel_end, vel_end + arrow_right, 1)
+    
+    # Draw perception radius circles
+    for radius, color in perception_radii:
+        pygame.draw.circle(surf, color, pos, radius, 1)
+    
+    # Draw state name as small text above entity
+    if state_name is not None:
+        from pygame.font import Font
+        tiny_font = Font(None, 18)
+        txt = tiny_font.render(state_name, True, (200, 200, 200))
+        text_rect = txt.get_rect(midbottom=(int(pos.x), int(pos.y) - 20))
+        surf.blit(txt, text_rect)

@@ -9,6 +9,7 @@
 # ============================================================================
 
 import math
+from numpy import diff
 from pygame.math import Vector2 as V2
 from utils import limit, circlecast_hits_any_rect
 from settings import (
@@ -43,6 +44,15 @@ def flee(pos, vel, target, max_speed):
     raise NotImplementedError("Implement flee using the opposite of seek")
 
 def arrive(pos, vel, target, max_speed, slow_radius=ARRIVE_SLOW_RADIUS, stop_radius=ARRIVE_STOP_RADIUS):
+    """
+    Like seek when far, but slow down near the target.
+    Returns a steering force following the desired_velocity - current_velocity pattern.
+    Rules:
+      If distance < stop_radius, return a force that cancels leftover velocity
+      If distance < slow_radius, scale desired speed by distance / slow_radius
+      Otherwise use full speed
+    This removes overshoot and jitter around the target.
+    """
     d = target - pos
     dist = d.length()
     
@@ -56,15 +66,6 @@ def arrive(pos, vel, target, max_speed, slow_radius=ARRIVE_SLOW_RADIUS, stop_rad
         desired_vel = d.normalize() * max_speed
     
     return desired_vel - vel
-    """
-    Like seek when far, but slow down near the target.
-    Rules
-      If distance < stop_radius, return a force that cancels leftover velocity
-      If distance < slow_radius, scale desired speed by distance / slow_radius
-      Otherwise use full speed
-    This should remove overshoot and jitter around the target.
-    """
-    raise NotImplementedError("Implement arrive with slow and stop radii")
 
 def integrate_velocity(vel, force, dt, max_speed):
     """
@@ -80,6 +81,21 @@ def integrate_velocity(vel, force, dt, max_speed):
 # ---------------- Boids components ----------------
 
 def boids_separation(me_pos, neighbors, sep_radius):
+    
+    steering = V2()
+    count = 0
+    for n_pos, n_vel in neighbors:
+        d = me_pos - n_pos
+        dist = d.length()
+        if 0 < dist < sep_radius:
+            steering += d.normalize() / dist  # Inverse proportional to distance
+            count += 1
+    if count > 0:
+        steering /= count
+        if steering.length() > 0:
+            return steering
+    return V2()
+    
     """
     Push away from neighbors that are too close.
     neighbors: list of tuples (neighbor_pos, neighbor_vel)
@@ -90,6 +106,18 @@ def boids_separation(me_pos, neighbors, sep_radius):
     raise NotImplementedError("Implement boids separation")
 
 def boids_cohesion(me_pos, neighbors):
+    if not neighbors:
+        return V2()
+    avg_pos = V2()
+    for n_pos, n_vel in neighbors:
+        avg_pos += n_pos
+        
+    avg_pos /= len(neighbors)
+
+    desired = avg_pos - me_pos
+    if desired.length() > 0:
+        desired = desired.normalize()
+    return V2()
     """
     Pull toward the average position of neighbors.
     Typical approach
@@ -98,6 +126,16 @@ def boids_cohesion(me_pos, neighbors):
     raise NotImplementedError("Implement boids cohesion")
 
 def boids_alignment(me_vel, neighbors):
+    if not neighbors:
+        return V2()
+    avg_vel = V2()
+    for n_pos, n_vel in neighbors:
+        avg_vel += n_vel
+    avg_vel /= len(neighbors)
+    
+    steering = avg_vel - me_vel
+    
+    return steering * 0.1
     """
     Match the average velocity of neighbors.
     Typical approach

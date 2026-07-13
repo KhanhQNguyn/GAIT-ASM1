@@ -18,7 +18,8 @@ from settings import (
     BUBBLE_RADIUS, BUBBLE_SPEED, BUBBLE_LIFETIME,
     HURT_INVULN
 )
-from utils import clamp
+from utils import clamp, draw_debug_overlay
+import debug_state
 from steering import arrive, integrate_velocity
 
 class Bubble:
@@ -119,3 +120,7 @@ class Frog:
         # Bubbles
         for b in self.bubbles:
             b.draw(surf)
+        
+        # Debug overlay when enabled (frog has no perception radius, show only velocity and "n/a")
+        if debug_state.DEBUG:
+            draw_debug_overlay(surf, self.pos, self.vel, [], "n/a")

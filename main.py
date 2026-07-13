@@ -12,11 +12,12 @@
 import sys, random
 import pygame
 from settings import *
-from utils import draw_grid
+from utils import draw_grid, draw_debug_overlay
 from world import World
 from entities.frog import Frog
 from entities.fly import Fly
 from entities.snake import Snake
+import debug_state
 
 def main():
     # Initialize Pygame and create a window and a clock
@@ -74,6 +75,10 @@ def main():
             if e.type == pygame.KEYDOWN:
                 if e.key == pygame.K_ESCAPE:
                     running = False
+
+                if e.key == pygame.K_F1:
+                    # F1 toggles debug overlay
+                    debug_state.DEBUG = not debug_state.DEBUG
 
                 if not game_over and e.key == pygame.K_SPACE:
                     # Space shoots a bubble from the frog mouth
