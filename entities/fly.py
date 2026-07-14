@@ -14,10 +14,11 @@ import random
 from enum import Enum, auto
 import pygame
 from pygame.math import Vector2 as V2
+import settings
 from settings import (
     WIDTH, HEIGHT, WHITE, YELLOW, PURPLE,
     FLY_RADIUS, FLY_SPEED, NEIGHBOR_RADIUS,
-    SEP_WEIGHT, COH_WEIGHT, ALI_WEIGHT, ANCHOR_WEIGHT
+    ANCHOR_WEIGHT
 )
 from utils import limit, draw_debug_overlay
 import debug_state
@@ -121,7 +122,7 @@ class Fly:
             sep = boids_separation(self.pos, neighbors, sep_radius=50.0)
             coh = boids_cohesion(self.pos, neighbors)
             ali = boids_alignment(self.vel, neighbors)
-            force = sep * SEP_WEIGHT + coh * COH_WEIGHT + ali * ALI_WEIGHT
+            force = sep * settings.SEP_WEIGHT + coh * settings.COH_WEIGHT + ali * settings.ALI_WEIGHT
 
             # Gentle anchor toward arena center to avoid drifting out of bounds
             center = V2(bounds_rect.centerx, bounds_rect.centery)

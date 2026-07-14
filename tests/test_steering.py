@@ -300,5 +300,77 @@ class TestPursueEvadeWander:
             diff = (forces[i] - forces[i-1]).length()
             assert 0 < diff < 50, "Wander force should vary smoothly but not jump wildly"
 
+class TestAdditionalCoverage:
+    def test_flee(self):
+        from steering import flee, seek
+        pos = V2(0, 0)
+        vel = V2(0, 0)
+        target = V2(100, 0)
+        max_speed = 100.0
+        
+        flee_force = flee(pos, vel, target, max_speed)
+        seek_force = seek(pos, vel, target, max_speed)
+        
+        # Flee should mirror seek (exact opposite direction, ignoring current vel if it's 0)
+        assert flee_force.length() > 0, "Flee should return a force"
+        assert flee_force.x < 0, "Flee should point away from target"
+        assert flee_force == -seek_force, "Flee should be exactly opposite of seek when vel=0"
+
+    def test_boids_separation_zero_neighbors(self):
+        from steering import boids_separation
+        pos = V2(0, 0)
+        neighbors = []
+        sep_radius = 50.0
+        
+        force = boids_separation(pos, neighbors, sep_radius)
+        assert force == V2(0, 0), "Separation with no neighbors should be zero"
+
+    def test_boids_separation_single_neighbor(self):
+        from steering import boids_separation
+        pos = V2(0, 0)
+        neighbors = [(V2(10, 0), V2(0, 0))]
+        sep_radius = 50.0
+        
+        force = boids_separation(pos, neighbors, sep_radius)
+        assert force.x < 0, "Separation should push away from neighbor"
+        assert force.y == 0
+
+    def test_seek_with_avoid(self):
+        from steering import seek_with_avoid, seek
+        import pygame
+        pos = V2(0, 0)
+        vel = V2(10, 0)
+        target = V2(100, 0)
+        max_speed = 100.0
+        radius = 10.0
+        
+        rects = [pygame.Rect(40, -20, 20, 40)]
+        
+        avoid_force = seek_with_avoid(pos, vel, target, max_speed, radius, rects)
+        open_force = seek_with_avoid(pos, vel, target, max_speed, radius, [])
+        plain_seek = seek(pos, vel, target, max_speed)
+        
+        assert open_force == plain_seek, "Open path should behave like plain seek"
+        assert avoid_force != plain_seek, "Blocked path should deviate from plain seek"
+        
+    def test_boids_combined_regression(self):
+        from steering import boids_cohesion, boids_separation, boids_alignment
+        pos = V2(0, 0)
+        vel = V2(10, 0)
+        
+        neighbors = [
+            (V2(30, 30), V2(0, 10)),
+            (V2(40, 20), V2(5, 5))
+        ]
+        sep_radius = 100.0
+        
+        coh = boids_cohesion(pos, neighbors)
+        sep = boids_separation(pos, neighbors, sep_radius)
+        ali = boids_alignment(vel, neighbors)
+        
+        assert coh != V2(0, 0), "Cohesion should not be zero for off-center neighbors"
+        assert sep != V2(0, 0), "Separation should not be zero for close neighbors"
+        assert ali != V2(0, 0), "Alignment should not be zero when velocities differ"
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

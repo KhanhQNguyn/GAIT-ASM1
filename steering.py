@@ -150,26 +150,32 @@ def seek_with_avoid(pos, vel, target, max_speed, radius, rects):
         return V2(0, 0)
         
     base_dir = d.normalize()
-    look_ahead = 150.0  
+    look_ahead = AVOID_LOOKAHEAD  # Tầm nhìn xa của con Rắn (khoảng cách quét)
     
-    # angles to check 
-    angles_to_check = [0, -15, 15, -30, 30, -45, 45, -60, 60, -90, 90]
+    # Các góc lệch để kiểm tra hướng đi: ưu tiên đi thẳng (0 độ), sau đó quét từ từ sang 2 bên
+    angles_to_check = [0]
+    angle = AVOID_ANGLE_INCREMENT
+    while angle <= AVOID_MAX_ANGLE:
+        angles_to_check.extend([-angle, angle])
+        angle += AVOID_ANGLE_INCREMENT
     
     for angle in angles_to_check:
-        # rotate
+        # Tạo hướng nhìn mới bằng cách xoay hướng gốc
         check_dir = base_dir.rotate(angle)
         
-        # create a line to check
+        # Điểm mút của tia quét
         p1 = pos + check_dir * look_ahead
         
-        # use the function circlecast_hits_any_rect to check if the line is blocked
+        # Dùng hàm có sẵn của Pygame / utils để quét xem đường này có bị chặn không
+        # (radius là bán kính con rắn, rects là danh sách các bức tường/vật cản)
         hit_wall = circlecast_hits_any_rect(pos, p1, radius, rects)
         
         if not hit_wall:
+            # Nếu đường này thoáng (không hit_wall), ta sẽ di chuyển theo hướng này
             desired = check_dir * max_speed
             return desired - vel
             
-    # If the snake is surrounded by walls and has no way to escape
+    # Nếu bị bao vây 4 phía không còn đường thoát, ráng lách thẳng hướng cũ nhưng chậm lại
     desired = base_dir * max_speed
     return desired - vel
 

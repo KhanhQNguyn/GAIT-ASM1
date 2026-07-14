@@ -15,9 +15,10 @@ from enum import Enum, auto
 import math, random
 import pygame
 from pygame.math import Vector2 as V2
+import settings
 from settings import (
     WIDTH, HEIGHT, WHITE,
-    SNAKE_RADIUS, SNAKE_SPEED, AGGRO_RANGE, DEAGGRO_RANGE
+    SNAKE_RADIUS, SNAKE_SPEED, DEAGGRO_RANGE
 )
 from utils import draw_debug_overlay
 import debug_state
@@ -79,7 +80,7 @@ class Snake:
                 self.set_state(SnakeState.PatrolHome)
 
         elif self.state in (SnakeState.PatrolHome, SnakeState.PatrolAway):
-            if dist < AGGRO_RANGE:
+            if dist < settings.AGGRO_RANGE:
                 self.set_state(SnakeState.Aggro)
 
         elif self.state == SnakeState.Harmless:
@@ -151,7 +152,7 @@ class Snake:
         if debug_state.DEBUG:
             # Draw velocity vector, AGGRO_RANGE and DEAGGRO_RANGE, and state name
             perception_radii = [
-                (AGGRO_RANGE, (255, 100, 100)),    # red for aggro range
+                (settings.AGGRO_RANGE, (255, 100, 100)),    # red for aggro range
                 (DEAGGRO_RANGE, (100, 100, 255))   # blue for deaggro range
             ]
             draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)
