@@ -10,6 +10,7 @@
 import pygame
 from pygame.math import Vector2 as V2
 from settings import WIDTH, HEIGHT
+import pygame.gfxdraw
 
 # A soft grid color for the background
 GRID = (36, 42, 48)
@@ -109,3 +110,20 @@ def draw_debug_overlay(surf, pos, vel, perception_radii, state_name=None):
         txt = tiny_font.render(state_name, True, (200, 200, 200))
         text_rect = txt.get_rect(midbottom=(int(pos.x), int(pos.y) - 20))
         surf.blit(txt, text_rect)
+
+def draw_heart(screen, x, y, color):
+    pts = [
+        (x + 6, y + 18),
+        (x + 17, y + 12),
+        (x + 20, y + 5),
+        (x + 16, y - 1),
+        (x + 10, y - 2),
+        (x + 6, y + 2),
+        (x + 2, y - 2),
+        (x - 4, y - 1),
+        (x - 8, y + 5),
+        (x - 5, y + 12),
+    ]
+
+    pygame.gfxdraw.aapolygon(screen, pts, (30, 30, 30))
+    pygame.gfxdraw.filled_polygon(screen, pts, color)

@@ -9,6 +9,7 @@
 #   Left click sets a target for the frog. Space shoots a bubble. R restarts.
 # ============================================================================
 
+from utils import draw_heart
 import sys, random
 import pygame
 from settings import *
@@ -156,13 +157,8 @@ def main():
 
         # Draw hearts for health
         for i in range(START_HEALTH):
-            cx = 16 + i * 26
-            cy = 18
-            col = RED if i < health else (80, 60, 60)
-            pygame.draw.circle(screen, col, (cx, cy), 10)
-        pygame.draw.circle(screen, col, (cx + 12, cy), 10)
-        points = [(cx - 6, cy + 2), (cx + 18, cy + 2), (cx + 6, cy + 18)]
-        pygame.draw.polygon(screen, col, points)
+            color = RED if i < health else (80, 60, 60)
+            draw_heart(screen, 16 + i * 26, 18, color)
 
         # Draw fly counter and control hint
         txt = font.render(f"Flies: {fly_count}/{FLIES_TO_WIN}", True, (240, 240, 240))
