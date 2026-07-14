@@ -96,9 +96,7 @@ class Snake:
         # ---------------- State behaviours ----------------
         if self.state == SnakeState.Aggro:
             self.color = (255, 150, 150)
-            # TODO: replace seek with pursue for smarter interception
-            # steer = pursue(self.pos, self.vel, frog.pos, frog.vel, self.speed)
-            steer = seek(self.pos, self.vel, frog.pos, self.speed)
+            steer = pursue(self.pos, self.vel, frog.pos, frog.vel, self.speed)
             # Light avoidance to reduce obstacle collisions while aggro
             steer += seek_with_avoid(self.pos, self.vel, frog.pos, self.speed, self.radius, self.rects) * 0.25
 
@@ -123,9 +121,7 @@ class Snake:
 
         else:  # Confused
             self.color = (245, 210, 160)
-            # TODO: use wander_force for a gentle random walk during confusion
-            # steer = wander_force(self.vel, rng_seed=self._rng_seed)
-            steer = V2()
+            steer = wander_force(self.vel, rng_seed=self._rng_seed)
 
         # Integrate velocity and update position
         self.vel = integrate_velocity(self.vel, steer, dt, self.speed)

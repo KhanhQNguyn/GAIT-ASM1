@@ -254,6 +254,51 @@ class TestArriveEdgeCases:
         assert force_magnitude == pytest.approx(expected, rel=0.01), \
             f"At slow_radius boundary, force should be ~{expected}, got {force_magnitude}"
 
+class TestPursueEvadeWander:
+    def test_pursue_perpendicular_target(self):
+        from steering import pursue, seek
+        max_speed = 100.0
+        pos = V2(0, 0)
+        vel = V2(0, 0)
+        
+        target_pos = V2(100, 0)
+        target_vel = V2(0, 50)
+        
+        pursue_force = pursue(pos, vel, target_pos, target_vel, max_speed)
+        seek_force = seek(pos, vel, target_pos, max_speed)
+        
+        assert pursue_force.y > seek_force.y, "Pursue should aim ahead of the target"
+        
+    def test_evade_approaching_threat(self):
+        from steering import evade, flee
+        max_speed = 100.0
+        pos = V2(0, 0)
+        vel = V2(0, 0)
+        
+        threat_pos = V2(100, 100)
+        threat_vel = V2(-100, 0)
+        
+        evade_force = evade(pos, vel, threat_pos, threat_vel, max_speed)
+        flee_force = flee(pos, vel, threat_pos, max_speed)
+        
+        assert evade_force != flee_force, "Evade should predict differently than flee"
+
+    def test_wander_force(self):
+        from steering import wander_force
+        vel = V2(10, 0)
+        
+        if hasattr(wander_force, "_state"):
+            wander_force._state.clear()
+            
+        forces = []
+        for _ in range(10):
+            force = wander_force(vel, rng_seed=42)
+            forces.append(force)
+            assert force.length() > 0, "Wander force should not be zero length"
+            
+        for i in range(1, len(forces)):
+            diff = (forces[i] - forces[i-1]).length()
+            assert 0 < diff < 50, "Wander force should vary smoothly but not jump wildly"
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

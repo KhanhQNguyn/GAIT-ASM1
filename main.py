@@ -17,7 +17,7 @@ from utils import draw_grid, draw_debug_overlay
 from world import World
 from entities.frog import Frog
 from entities.fly import Fly
-from entities.snake import Snake
+from entities.snake import Snake, SnakeState
 import debug_state
 
 def main():
@@ -119,30 +119,23 @@ def main():
                 s.update(dt, frog)
 
             # ------------- Bubble hit logic -------------
-            # For each bubble and snake pair, if they overlap:
-            #   - pop the bubble
-            #   - if the snake is Aggro, switch it to Harmless or Confused
-            # This logic is left as a student task to connect FSMs and mechanics.
-            # for s in snakes:
-            #     for b in frog.bubbles:
-            #         if (b.pos - s.pos).length_squared() <= (BUBBLE_RADIUS + s.radius) ** 2:
-            #             # if s.state == SnakeState.Aggro: s.set_state(SnakeState.Harmless)
-            #             # optional: on going harmless to home, then Confused for a short time
-            #             b.alive = False
+            for s in snakes:
+                for b in frog.bubbles:
+                    if (b.pos - s.pos).length_squared() <= (BUBBLE_RADIUS + s.radius) ** 2:
+                        b.alive = False
+                        if s.state == SnakeState.Aggro:
+                            s.set_state(SnakeState.Harmless)
 
             # ------------- Damage logic -------------
-            # Only Aggro snakes should damage the frog.
-            # Use frog.can_be_hurt() to avoid multiple hits in a row.
-            # After a hit, reduce health and optionally pacify the snake.
-            # for s in snakes:
-            #     if s.state == SnakeState.Aggro and (s.pos - frog.pos).length_squared() <= (s.radius + FROG_RADIUS) ** 2:
-            #         if frog.can_be_hurt():
-            #             health -= 1
-            #             frog.start_hurt()
-            #             s.set_state(SnakeState.Harmless)
-            #             if health <= 0:
-            #                 game_over = True
-            #                 win = False
+            for s in snakes:
+                if s.state == SnakeState.Aggro and (s.pos - frog.pos).length_squared() <= (s.radius + FROG_RADIUS) ** 2:
+                    if frog.can_be_hurt():
+                        health -= 1
+                        frog.start_hurt()
+                        s.set_state(SnakeState.Harmless)
+                        if health <= 0:
+                            game_over = True
+                            win = False
 
         # ---------------- Draw ----------------
         screen.fill(BG)           # clear background

@@ -150,28 +150,26 @@ def seek_with_avoid(pos, vel, target, max_speed, radius, rects):
         return V2(0, 0)
         
     base_dir = d.normalize()
-    look_ahead = 150.0  # Tầm nhìn xa của con Rắn (khoảng cách quét)
+    look_ahead = 150.0  
     
-    # Các góc lệch để kiểm tra hướng đi: ưu tiên đi thẳng (0 độ), sau đó quét từ từ sang 2 bên
+    # angles to check 
     angles_to_check = [0, -15, 15, -30, 30, -45, 45, -60, 60, -90, 90]
     
     for angle in angles_to_check:
-        # Tạo hướng nhìn mới bằng cách xoay hướng gốc
+        # rotate
         check_dir = base_dir.rotate(angle)
         
-        # Điểm mút của tia quét
+        # create a line to check
         p1 = pos + check_dir * look_ahead
         
-        # Dùng hàm có sẵn của Pygame / utils để quét xem đường này có bị chặn không
-        # (radius là bán kính con rắn, rects là danh sách các bức tường/vật cản)
+        # use the function circlecast_hits_any_rect to check if the line is blocked
         hit_wall = circlecast_hits_any_rect(pos, p1, radius, rects)
         
         if not hit_wall:
-            # Nếu đường này thoáng (không hit_wall), ta sẽ di chuyển theo hướng này
             desired = check_dir * max_speed
             return desired - vel
             
-    # Nếu bị bao vây 4 phía không còn đường thoát, ráng lách thẳng hướng cũ nhưng chậm lại
+    # If the snake is surrounded by walls and has no way to escape
     desired = base_dir * max_speed
     return desired - vel
 
@@ -187,14 +185,23 @@ def pursue(pos, vel, target_pos, target_vel, max_speed):
       return seek toward predicted
     Replace simple seek in Snake Aggro with pursue for better interception.
     """
-    
+    small_eps = 1e-6
+    distance = (target_pos - pos).length()
+    time_horizon = distance / (max_speed + small_eps)
+    predicted = target_pos + target_vel * time_horizon
+    return seek(pos, vel, predicted, max_speed)
 
 def evade(pos, vel, threat_pos, threat_vel, max_speed):
     """
     Predict the future position of a threat then flee from that point.
     This is the inverse of pursue. Use the same prediction idea.
     """
-
+    small_eps = 1e-6
+    distance = (threat_pos - pos).length()
+    time_horizon = distance / (max_speed + small_eps)
+    predicted = threat_pos + threat_vel * time_horizon
+    return flee(pos, vel, predicted, max_speed)
+import random
 
 def wander_force(me_vel, jitter_deg=12.0, circle_distance=24.0, circle_radius=18.0, rng_seed=None):
     """
@@ -204,4 +211,30 @@ def wander_force(me_vel, jitter_deg=12.0, circle_distance=24.0, circle_radius=18
       target point on that circle by a tiny random angle each update.
     Use this for Fly Idle and Snake Confused.
     """
+    if not hasattr(wander_force, "_state"):
+        wander_force._state = {}
+        
+    if rng_seed not in wander_force._state:
+        rng = random.Random(rng_seed) if rng_seed is not None else random.Random()
+        wander_force._state[rng_seed] = {
+            'angle': rng.uniform(0, 360),
+            'rng': rng
+        }
+        
+    state = wander_force._state[rng_seed]
+    rng = state['rng']
+    
+    # Jitter the angle
+    state['angle'] += rng.uniform(-jitter_deg, jitter_deg)
+    
+    if me_vel.length_squared() == 0:
+        heading = V2(1, 0)
+    else:
+        heading = me_vel.normalize()
+        
+    circle_center = heading * circle_distance
+    displacement = V2(circle_radius, 0).rotate(state['angle'])
+    
+    desired = circle_center + displacement
+    return desired - me_vel
 
