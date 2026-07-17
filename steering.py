@@ -101,9 +101,10 @@ def boids_separation(me_pos, neighbors, sep_radius):
             return steering
     return V2()
 
-def boids_cohesion(me_pos, neighbors):
+def boids_cohesion(me_pos, neighbors, dead_zone_radius=6.0, slow_zone_radius=40.0):
     """
     Pull toward the average position of neighbors.
+    This mirrors arrive()'s slow/stop-radius idea, applied to a flocking force instead of a single target.
     Typical approach
       Compute the center of mass of neighbors then steer toward that point.
     """
@@ -115,10 +116,15 @@ def boids_cohesion(me_pos, neighbors):
         
     avg_pos /= len(neighbors)
 
-    desired = avg_pos - me_pos
-    if desired.length() > 0:
-        desired = desired.normalize()
-    return desired
+    dist = (avg_pos - me_pos).length()
+    if dist < dead_zone_radius:
+        return V2()
+    elif dist < slow_zone_radius:
+        direction = (avg_pos - me_pos).normalize()
+        return direction * (dist / slow_zone_radius)
+    else:
+        direction = (avg_pos - me_pos).normalize()
+        return direction
 
 def boids_alignment(me_vel, neighbors):
     """
@@ -139,7 +145,7 @@ def boids_alignment(me_vel, neighbors):
 
 # ---------------- Obstacle avoidance blend ----------------
 
-def seek_with_avoid(pos, vel, target, max_speed, radius, rects):
+def seek_with_avoid(pos, vel, target, max_speed, radius, rects, preferred_angle=0.0):
     """
     Move towards a target, but sweep a path ahead using circle casts.
     If the direct path is blocked, try looking left and right at increasing angles
@@ -147,7 +153,7 @@ def seek_with_avoid(pos, vel, target, max_speed, radius, rects):
     """
     d = target - pos
     if d.length_squared() == 0:
-        return V2(0, 0)
+        return (V2(0, 0), 0.0)
         
     base_dir = d.normalize()
     look_ahead = AVOID_LOOKAHEAD  # Tầm nhìn xa của con Rắn (khoảng cách quét)
@@ -158,6 +164,10 @@ def seek_with_avoid(pos, vel, target, max_speed, radius, rects):
     while angle <= AVOID_MAX_ANGLE:
         angles_to_check.extend([-angle, angle])
         angle += AVOID_ANGLE_INCREMENT
+        
+    if preferred_angle != 0.0 and preferred_angle in angles_to_check:
+        angles_to_check.remove(preferred_angle)
+        angles_to_check.insert(0, preferred_angle)
     
     for angle in angles_to_check:
         # Tạo hướng nhìn mới bằng cách xoay hướng gốc
@@ -173,11 +183,11 @@ def seek_with_avoid(pos, vel, target, max_speed, radius, rects):
         if not hit_wall:
             # Nếu đường này thoáng (không hit_wall), ta sẽ di chuyển theo hướng này
             desired = check_dir * max_speed
-            return desired - vel
+            return (desired - vel, angle)
             
     # Nếu bị bao vây 4 phía không còn đường thoát, ráng lách thẳng hướng cũ nhưng chậm lại
     desired = base_dir * max_speed
-    return desired - vel
+    return (desired - vel, 0.0)
 
 # ---------------- New behaviours to be implemented ----------------
 

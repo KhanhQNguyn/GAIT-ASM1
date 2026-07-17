@@ -20,7 +20,7 @@ from settings import (
     WIDTH, HEIGHT, WHITE,
     SNAKE_RADIUS, SNAKE_SPEED, DEAGGRO_RANGE
 )
-from utils import draw_debug_overlay
+from utils import draw_debug_overlay, nearest_point_on_rect, clamp
 import debug_state
 from steering import arrive, seek, seek_with_avoid, integrate_velocity, pursue, wander_force
 
@@ -60,6 +60,7 @@ class Snake:
 
         # RNG for wander if needed
         self._rng_seed = random.randint(0, 999999)
+        self._avoid_angle = 0.0
 
     def set_state(self, st):
         """Switch to a new FSM state."""
@@ -95,30 +96,53 @@ class Snake:
                 self.set_state(SnakeState.PatrolAway)
 
         # ---------------- State behaviours ----------------
+        min_obstacle_dist = float('inf')
+        for r in self.rects:
+            np = nearest_point_on_rect(self.pos, r)
+            d = (self.pos - np).length()
+            if d < min_obstacle_dist:
+                min_obstacle_dist = d
+        
+        # Scale from 0.25 at >= 80px up to 0.65 at 0px
+        t = clamp((80.0 - min_obstacle_dist) / 80.0, 0.0, 1.0)
+        avoid_weight = 0.25 + 0.40 * t
+
         if self.state == SnakeState.Aggro:
             self.color = (255, 150, 150)
             steer = pursue(self.pos, self.vel, frog.pos, frog.vel, self.speed)
             # Light avoidance to reduce obstacle collisions while aggro
-            steer += seek_with_avoid(self.pos, self.vel, frog.pos, self.speed, self.radius, self.rects) * 0.25
+            avoid_force, self._avoid_angle = seek_with_avoid(
+                self.pos, self.vel, frog.pos, self.speed, self.radius, self.rects,
+                preferred_angle=self._avoid_angle)
+            steer += avoid_force * avoid_weight
 
         elif self.state == SnakeState.PatrolAway:
             self.color = (180, 200, 255)
             steer = arrive(self.pos, self.vel, self.patrol_point, self.speed)
             if (self.patrol_point - self.pos).length() < 10:
                 self.set_state(SnakeState.PatrolHome)
-            steer += seek_with_avoid(self.pos, self.vel, self.patrol_point, self.speed, self.radius, self.rects) * 0.25
+            avoid_force, self._avoid_angle = seek_with_avoid(
+                self.pos, self.vel, self.patrol_point, self.speed, self.radius, self.rects,
+                preferred_angle=self._avoid_angle)
+            steer += avoid_force * avoid_weight
 
         elif self.state == SnakeState.PatrolHome:
             self.color = (180, 220, 180)
             steer = arrive(self.pos, self.vel, self.home, self.speed)
             if (self.home - self.pos).length() < 10:
                 self.set_state(SnakeState.PatrolAway)
-            steer += seek_with_avoid(self.pos, self.vel, self.home, self.speed, self.radius, self.rects) * 0.25
+            avoid_force, self._avoid_angle = seek_with_avoid(
+                self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
+                preferred_angle=self._avoid_angle)
+            steer += avoid_force * avoid_weight
 
         elif self.state == SnakeState.Harmless:
             self.color = (190, 180, 255)
             steer = arrive(self.pos, self.vel, self.home, self.speed * 0.9)
-            steer += seek_with_avoid(self.pos, self.vel, self.home, self.speed, self.radius, self.rects) * 0.25
+            avoid_force, self._avoid_angle = seek_with_avoid(
+                self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
+                preferred_angle=self._avoid_angle)
+            steer += avoid_force * avoid_weight
 
         else:  # Confused
             self.color = (245, 210, 160)

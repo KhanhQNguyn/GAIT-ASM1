@@ -10,7 +10,7 @@
 # ============================================================================
 
 from utils import draw_heart
-import sys, random
+import sys, random, math
 import pygame
 from settings import *
 from utils import draw_grid, draw_debug_overlay
@@ -84,9 +84,25 @@ def main():
         world = World(WIDTH, HEIGHT)
         frog = Frog((WIDTH * 0.5, HEIGHT * 0.5))
 
-        # Randomly scatter flies inside the world bounds
-        flies = [Fly((random.randint(60, WIDTH - 60), random.randint(60, HEIGHT - 60)))
-                 for _ in range(NUM_FLIES)]
+        # Generate cluster centers
+        centers = []
+        while len(centers) < FLY_CLUSTER_COUNT:
+            cx = random.randint(60, WIDTH - 60)
+            cy = random.randint(60, HEIGHT - 60)
+            candidate = V2(cx, cy)
+            if all((candidate - c).length() >= 250 for c in centers):
+                centers.append(candidate)
+            
+        flies = []
+        for i in range(NUM_FLIES):
+            center = centers[i % FLY_CLUSTER_COUNT]
+            radius = FLY_CLUSTER_SPAWN_RADIUS * math.sqrt(random.random())
+            angle = random.uniform(0, 2 * math.pi)
+            fx = center.x + radius * math.cos(angle)
+            fy = center.y + radius * math.sin(angle)
+            fx = max(FLY_RADIUS + 4, min(WIDTH - (FLY_RADIUS + 4), fx))
+            fy = max(FLY_RADIUS + 4, min(HEIGHT - (FLY_RADIUS + 4), fy))
+            flies.append(Fly((fx, fy)))
 
         # Create snakes with patrol points mirrored across the screen
         snakes = []

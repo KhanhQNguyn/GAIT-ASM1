@@ -34,6 +34,8 @@ BUBBLE_SPEED    = 380.0   # how fast the bubble travels
 BUBBLE_LIFETIME = 2.0     # seconds before the bubble pops automatically
 
 # Fly setup
+FLY_CLUSTER_COUNT = 4        # number of initial flock clusters
+FLY_CLUSTER_SPAWN_RADIUS = 90.0  # max offset from a cluster center when spawning
 NUM_FLIES = 30           # how many flies spawn
 FLY_RADIUS = 8            # fly draw and collision radius
 FLY_SPEED  = 120.0        # fly max speed
@@ -41,6 +43,8 @@ FLY_SPEED  = 120.0        # fly max speed
 # Boids neighborhood and weights
 # These determine how flies react to neighbors
 NEIGHBOR_RADIUS = 120.0   # how far a fly considers other flies as neighbors
+REGROUP_RADIUS  = 500.0   # search radius for the nearest fly when totally alone
+REGROUP_WEIGHT  = 0.6     # how gently an isolated fly steers back toward the group
 SEP_RADIUS      = 50.0    # separation threshold distance
 SEP_WEIGHT      = 1.9     # weight for separation force
 COH_WEIGHT      = 0.9     # weight for cohesion force

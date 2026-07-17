@@ -24,7 +24,7 @@ from utils import limit, draw_debug_overlay
 import debug_state
 from steering import (
     boids_separation, boids_cohesion, boids_alignment,
-    flee, evade, wander_force
+    flee, evade, wander_force, seek
 )
 
 class FlyState(Enum):
@@ -119,10 +119,26 @@ class Fly:
                     neighbors.append((f.pos, f.vel))
 
             # TODO: compute boids forces
-            sep = boids_separation(self.pos, neighbors, sep_radius=50.0)
-            coh = boids_cohesion(self.pos, neighbors)
-            ali = boids_alignment(self.vel, neighbors)
-            force = sep * settings.SEP_WEIGHT + coh * settings.COH_WEIGHT + ali * settings.ALI_WEIGHT
+            if len(neighbors) == 0:
+                nearest = None
+                min_dist = settings.REGROUP_RADIUS
+                for f in flies:
+                    if f is self:
+                        continue
+                    d = (f.pos - self.pos).length()
+                    if d < min_dist:
+                        min_dist = d
+                        nearest = f
+                
+                if nearest is not None:
+                    force = seek(self.pos, self.vel, nearest.pos, FLY_SPEED) * settings.REGROUP_WEIGHT
+                else:
+                    force = V2()
+            else:
+                sep = boids_separation(self.pos, neighbors, sep_radius=settings.SEP_RADIUS)
+                coh = boids_cohesion(self.pos, neighbors)
+                ali = boids_alignment(self.vel, neighbors)
+                force = sep * settings.SEP_WEIGHT + coh * settings.COH_WEIGHT + ali * settings.ALI_WEIGHT
 
             # Gentle anchor toward arena center to avoid drifting out of bounds
             center = V2(bounds_rect.centerx, bounds_rect.centery)
