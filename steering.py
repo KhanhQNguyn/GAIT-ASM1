@@ -9,7 +9,6 @@
 # ============================================================================
 
 import math
-from numpy import diff
 from pygame.math import Vector2 as V2
 from utils import limit, circlecast_hits_any_rect
 from settings import (
@@ -98,10 +97,10 @@ def boids_separation(me_pos, neighbors, sep_radius):
     if count > 0:
         steering /= count
         if steering.length() > 0:
-            return steering
+            return limit(steering, 1.5)
     return V2()
 
-def boids_cohesion(me_pos, neighbors, dead_zone_radius=6.0, slow_zone_radius=40.0):
+def boids_cohesion(me_pos, neighbors, dead_zone_radius=6.0, slow_zone_radius=30.0):
     """
     Pull toward the average position of neighbors.
     This mirrors arrive()'s slow/stop-radius idea, applied to a flocking force instead of a single target.

@@ -40,11 +40,6 @@ The content is organized as follows:
 </file_summary>
 
 <directory_structure>
-.github/
-  copilot-instructions.md
-docs/
-  README.md
-  rubric-map.md
 entities/
   fly.py
   frog.py
@@ -60,94 +55,28 @@ world.py
 <files>
 This section contains the contents of the repository's files.
 
-<file path="docs/README.md">
-# GAIT-ASM1: Frog, Flies, and Snakes
-
-An autonomous agent simulation built with Pygame where a frog (player) navigates a dynamic ecosystem of boids-based flies and FSM-driven snakes.
-
-## How to Run
-Ensure you have Python and `pygame` installed.
-```bash
-python main.py
-```
-To run the automated tests:
-```bash
-pytest tests/
-```
-
-## Controls
-- **Left Click**: Move the frog to the clicked position.
-- **Space**: Shoot a fast-moving bubble that pacifies aggressive snakes upon hit.
-- **R**: Restart the simulation round.
-- **F1**: Toggle Developer Debug HUD and live-tuning sliders.
-
-## Debug Mode (F1)
-Pressing F1 toggles the `debug_state.DEBUG` overlay, revealing live vector rendering for agents:
-- Visualization of steering forces, bounding logic, and FSM states (e.g., `Aggro`, `Confused`, `Flock`, `Fleeing`).
-- Interactive live sliders dynamically tweak configuration (Separation, Cohesion, Alignment weights, and Aggro range) in real-time.
-- HUD counters provide metric tracking (e.g., pursuit closing speed).
-</file>
-
-<file path="docs/rubric-map.md">
-# Marking Rubric Map
-
-| Rubric Bullet | File | Function/Line | How it's satisfied |
-|---|---|---|---|
-| **Steering 6 pts** | | | |
-| Seek, Flee, Arrive | `steering.py` | `seek()`, `flee()`, `arrive()` | Core steering mechanisms implemented; `arrive` leverages distance-based braking and proportional logic. |
-| Pursue and Evade | `steering.py` | `pursue()`, `evade()` | Future interception targets predicted dynamically based on entity velocity and speed horizons. |
-| Wander | `steering.py` | `wander_force()` | Implements jitter offset circle calculations. Wired into the `Idle` fly state and `Confused` snake state. |
-| Boids Flocking | `steering.py`, `entities/fly.py`, `main.py` | `boids_cohesion`, `boids_separation`, `reset()` | Implements standard blend weights with Arrive-like dead-zone smoothing targeting the flock core. Additionally, clustered spatial spawning and a localized straggler-`seek()` fallback ensure robust behavior under pressure. |
-| Obstacle Avoidance | `steering.py` | `seek_with_avoid()` | Circlecast raycasting averts collisions using tuple payloads for hysteresis path sticking. |
-| Velocity Integration | `steering.py` | `integrate_velocity()` | Euler integration accurately integrates forces and enforces optimal speed caps continuously. |
-| **FSMs 4 pts** | | | |
-| Fly State Machine | `entities/fly.py` | `update()` | 3-State FSM distinguishing between `Flock`, `Fleeing`, and `Idle` via threshold triggers leveraging `BubbleFleeRange`. |
-| Snake State Machine | `entities/snake.py` | `update()` | 5-State FSM (`PatrolAway`, `PatrolHome`, `Aggro`, `Harmless`, `Confused`) routing aggressive engagement and cyclic guarding. |
-| FSM Logic Completeness | `entities/snake.py` | `set_state()` | Safe timers and conditional distances safely prevent locking loops. |
-| State Visualization | `entities/snake.py` | `draw()` | F1 overlay draws string literal states over agents while bodies independently map distinct dynamic colors to states. |
-| **Advanced Extensions 10 pts** | | | |
-| Clustered Spawning | `main.py` | `reset()` | Densities grouped during `reset()` spawn calculations, accelerating initial herd locking. |
-| Dynamic Obstacle Avoidance Priority | `entities/snake.py` | `update()` | Dynamically raises the blend weight of collision avoidance scaling natively up to `0.65` near obstacles. |
-| Stickiness Hysteresis | `steering.py` | `seek_with_avoid()` | Tuple returns recall favorable paths enforcing directional momentum over frame-to-frame recalculations preventing jitter. |
-| Physics Impact Bubbles | `entities/frog.py` | `shoot()` | Frogs fire fast-moving pacification bubbles triggering reactive defensive logic from aggressor networks. |
-| Developer Sliders | `main.py` | `Slider()` | Enables live, real-time alterations to Separation, Cohesion, Alignment ranges removing constant console restarts. |
-
-## Fly State Machine
-```mermaid
-stateDiagram-v2
-    [*] --> Flock
-    Flock --> Fleeing : scared by frog or bubble
-    Flock --> Idle : dist > 380 for 2.0s
-    Fleeing --> Flock : frog > 220 and calm
-    Idle --> Fleeing : scared by frog or bubble
-    Idle --> Flock : frog <= 380
-```
-
-## Snake State Machine
-```mermaid
-stateDiagram-v2
-    [*] --> PatrolAway
-    PatrolAway --> PatrolHome : near point
-    PatrolHome --> PatrolAway : near home
-    PatrolAway --> Aggro : frog < AGGRO_RANGE
-    PatrolHome --> Aggro : frog < AGGRO_RANGE
-    Aggro --> PatrolHome : frog > DEAGGRO_RANGE
-    Aggro --> Harmless : hit by bubble / hits frog
-    Harmless --> Confused : returns home
-    Confused --> PatrolAway : timer ends
-```
-</file>
-
 <file path="debug_state.py">
 # ============================================================================
 # debug_state.py
 # Purpose
 #   Global debug flag that can be toggled by F1 key.
 #   Entities import this to check if debug mode is enabled.
+#   Also holds a live FSM transition log for the debug overlay.
 # ============================================================================
 
 # Global debug toggle flag
 DEBUG = False
+
+# Live FSM transition log — list of (time_str, kind, index, old_state, new_state)
+TRANSITION_LOG = []
+MAX_LOG_ENTRIES = 10
+
+def log_transition(kind, index, old_state, new_state):
+    """Record a state transition to the live debug log."""
+    import time as _time
+    TRANSITION_LOG.append((_time.strftime("%H:%M:%S"), kind, index, old_state, new_state))
+    if len(TRANSITION_LOG) > MAX_LOG_ENTRIES:
+        TRANSITION_LOG.pop(0)
 </file>
 
 <file path="world.py">
@@ -192,31 +121,6 @@ class World:
             pygame.draw.rect(surf, (110, 130, 145), r, 2, border_radius=10)
 </file>
 
-<file path=".github/copilot-instructions.md">
-# Copilot instructions for GAIT-ASM1
-
-## Project scope and entrypoint
-- The active Python project is in `GAIT-ASM1/` (this directory). Run commands from here.
-- Main entrypoint: `python main.py`
-
-## Build, test, and lint commands
-- This project does not define a build system.
-- This project includes a comprehensive pytest automated test suite in `tests/test_steering.py` with 15+ passing tests covering all steering behaviors.
-- This project does not define a lint configuration (`.flake8`, `ruff`, `pylint`, etc. were not found).
-- Manual runtime check:
-  - `python main.py`
-
-## High-level architecture
-- `main.py` is the game loop and orchestrator:
-  - Creates world and agents in `reset()` using clustered spawn points with a nearest-group regroup fallback.
-  - Per-frame order is: input -> update frog -> update flies -> update snakes -> collision/rule checks -> draw
-- `debug_state.py` contains the global `DEBUG` flag which is toggled with `F1`.
-- `settings.py` is the single source of gameplay constants (sizes, speeds, ranges, weights, win/health rules).
-- `steering.py` contains steering primitives and motion helpers (seek/flee/arrive, boids parts, obstacle-avoid blend, velocity integration).
-- `pursue`, `evade`, and `wander_force` are fully implemented and wired into agents.
-- `seek_with_avoid` returns a `(force, chosen_angle)` tuple with sticky-angle hysteresis to fix obstacle pathfinding jitter.
-</file>
-
 <file path="entities/frog.py">
 # ============================================================================
 # frog.py
@@ -236,9 +140,10 @@ from settings import (
     WIDTH, HEIGHT, WHITE, GREEN, BLUE,
     FROG_RADIUS, FROG_SPEED,
     BUBBLE_RADIUS, BUBBLE_SPEED, BUBBLE_LIFETIME,
-    HURT_INVULN
+    HURT_INVULN,
+    ARRIVE_STOP_RADIUS, ARRIVE_STOP_DAMPING, ARRIVE_STOP_SNAP
 )
-from utils import clamp, draw_debug_overlay
+from utils import clamp, draw_debug_overlay, circle_rect_intersect, nearest_point_on_rect
 import debug_state
 from steering import arrive, integrate_velocity
 
@@ -263,7 +168,7 @@ class Bubble:
         pygame.draw.circle(surf, WHITE, self.pos, BUBBLE_RADIUS, 2)
 
 class Frog:
-    def __init__(self, pos):
+    def __init__(self, pos, rects=None):
         self.pos = V2(pos)
         self.vel = V2()
         self.target = V2(pos)
@@ -271,6 +176,7 @@ class Frog:
         self.speed = FROG_SPEED
         self.facing = V2(1, 0)   # used to aim bubbles when frog is not moving
         self.bubbles = []
+        self.rects = rects if rects is not None else []
 
         # Hurt state setup. When hurt_timer > 0 the frog cannot be hit again.
         self.hurt_timer = 0.0
@@ -301,6 +207,14 @@ class Frog:
         # Integrate velocity with dt and clamp to max speed
         self.vel = integrate_velocity(self.vel, steer, dt, self.speed)
 
+        # Hard-stop damping when inside stop radius — converges fully rather than creeping
+        dist_to_target = (self.target - self.pos).length()
+        if dist_to_target < ARRIVE_STOP_RADIUS:
+            damping = max(0.0, 1.0 - dt * ARRIVE_STOP_DAMPING)
+            self.vel *= damping
+            if self.vel.length() < ARRIVE_STOP_SNAP:
+                self.vel = V2(0, 0)
+
         # Move the frog
         self.pos += self.vel * dt
 
@@ -311,6 +225,21 @@ class Frog:
         # Keep inside bounds
         self.pos.x = clamp(self.pos.x, self.radius, WIDTH - self.radius)
         self.pos.y = clamp(self.pos.y, self.radius, HEIGHT - self.radius)
+
+        # Push frog out of any obstacle rectangle it overlaps
+        for rect in self.rects:
+            if circle_rect_intersect(self.pos, self.radius, rect):
+                nearest = nearest_point_on_rect(self.pos, rect)
+                diff = self.pos - nearest
+                if diff.length_squared() > 0:
+                    push_dir = diff.normalize()
+                else:
+                    push_dir = V2(0, -1)
+                self.pos = nearest + push_dir * self.radius
+                # Kill velocity component pushing further into the obstacle
+                into_wall = self.vel.dot(push_dir)
+                if into_wall < 0:
+                    self.vel -= push_dir * into_wall
 
         # Update bubbles and remove popped ones
         for b in list(self.bubbles):
@@ -344,84 +273,6 @@ class Frog:
         # Debug overlay when enabled (frog has no perception radius, show only velocity and "n/a")
         if debug_state.DEBUG:
             draw_debug_overlay(surf, self.pos, self.vel, [], "n/a")
-</file>
-
-<file path="settings.py">
-# ============================================================================
-# settings.py
-# Purpose
-#   Central place for all constants and tuning values.
-#   You can tweak speeds, radii, and counts here without touching logic.
-# Reading guide
-#   Each variable has a short note so you know what it controls.
-# ============================================================================
-
-# Window size in pixels
-WIDTH, HEIGHT = 1920, 1080
-
-# Target frames per second for the game loop
-FPS = 60
-
-# Colors as RGB tuples. Used by drawing code for the UI and agents.
-BG    = (28, 33, 38)     # background color
-WHITE = (240, 240, 240)  # text and highlights
-GREEN = (90, 220, 120)   # frog color
-BLUE  = (120, 180, 250)  # bubble color
-YELLOW= (250, 225, 120)  # fly color when flocking or idle
-PURPLE= (185, 120, 250)  # fly color when fleeing
-RED   = (232, 88, 88)    # health hearts
-MUTED = (180, 188, 196)  # hint text
-
-# Frog setup
-FROG_RADIUS = 16          # draw size and collision size for the frog
-FROG_SPEED  = 200.0       # top speed for the frog in pixels per second
-HURT_INVULN = 1.0         # seconds of temporary invulnerability after damage
-
-# Bubble setup
-BUBBLE_RADIUS   = 8       # visual radius and collision radius
-BUBBLE_SPEED    = 380.0   # how fast the bubble travels
-BUBBLE_LIFETIME = 2.0     # seconds before the bubble pops automatically
-
-# Fly setup
-FLY_CLUSTER_COUNT = 4        # number of initial flock clusters
-FLY_CLUSTER_SPAWN_RADIUS = 90.0  # max offset from a cluster center when spawning
-NUM_FLIES = 30           # how many flies spawn
-FLY_RADIUS = 8            # fly draw and collision radius
-FLY_SPEED  = 120.0        # fly max speed
-
-# Boids neighborhood and weights
-# These determine how flies react to neighbors
-NEIGHBOR_RADIUS = 120.0   # how far a fly considers other flies as neighbors
-REGROUP_RADIUS  = 500.0   # search radius for the nearest fly when totally alone
-REGROUP_WEIGHT  = 0.6     # how gently an isolated fly steers back toward the group
-SEP_RADIUS      = 50.0    # separation threshold distance
-SEP_WEIGHT      = 1.9     # weight for separation force
-COH_WEIGHT      = 0.9     # weight for cohesion force
-ALI_WEIGHT      = 0.8     # weight for alignment force
-ANCHOR_WEIGHT   = 0.6     # small pull to arena center to keep flock on screen
-
-# Arrive behavior
-# Slow inside slow radius and stop inside stop radius
-ARRIVE_SLOW_RADIUS = 120.0
-ARRIVE_STOP_RADIUS = 8.0
-
-# Snake setup
-NUM_SNAKES  = 3
-SNAKE_RADIUS = 18
-SNAKE_SPEED  = 160.0
-
-# Snake perception ranges for FSM transitions
-AGGRO_RANGE   = 260.0     # start chasing when frog gets this close
-DEAGGRO_RANGE = 360.0     # stop chasing when frog moves this far
-
-# Obstacle avoidance tuning
-AVOID_LOOKAHEAD       = 260.0   # how far the snake looks ahead when checking a corridor
-AVOID_ANGLE_INCREMENT = 12      # degrees to rotate per step when searching for a free path
-AVOID_MAX_ANGLE       = 84      # maximum deviation to try on either side
-
-# Game rules
-START_HEALTH = 3                 # how many hits the frog can take
-FLIES_TO_WIN = 10                # win condition counter
 </file>
 
 <file path="utils.py">
@@ -556,6 +407,92 @@ def draw_heart(screen, x, y, color):
     pygame.gfxdraw.filled_polygon(screen, pts, color)
 </file>
 
+<file path="settings.py">
+# ============================================================================
+# settings.py
+# Purpose
+#   Central place for all constants and tuning values.
+#   You can tweak speeds, radii, and counts here without touching logic.
+# Reading guide
+#   Each variable has a short note so you know what it controls.
+# ============================================================================
+
+# Window size in pixels
+WIDTH, HEIGHT = 1920, 1080
+
+# Target frames per second for the game loop
+FPS = 60
+
+# Colors as RGB tuples. Used by drawing code for the UI and agents.
+BG    = (28, 33, 38)     # background color
+WHITE = (240, 240, 240)  # text and highlights
+GREEN = (90, 220, 120)   # frog color
+BLUE  = (120, 180, 250)  # bubble color
+YELLOW= (250, 225, 120)  # fly color when flocking or idle
+PURPLE= (185, 120, 250)  # fly color when fleeing
+RED   = (232, 88, 88)    # health hearts
+MUTED = (180, 188, 196)  # hint text
+
+# Frog setup
+FROG_RADIUS = 16          # draw size and collision size for the frog
+FROG_SPEED  = 200.0       # top speed for the frog in pixels per second
+HURT_INVULN = 1.0         # seconds of temporary invulnerability after damage
+
+# Bubble setup
+BUBBLE_RADIUS   = 8       # visual radius and collision radius
+BUBBLE_SPEED    = 380.0   # how fast the bubble travels
+BUBBLE_LIFETIME = 2.0     # seconds before the bubble pops automatically
+
+# Fly setup
+FLY_CLUSTER_COUNT = 4        # number of initial flock clusters
+FLY_CLUSTER_SPAWN_RADIUS = 90.0  # max offset from a cluster center when spawning
+NUM_FLIES = 30           # how many flies spawn
+FLY_RADIUS = 8            # fly draw and collision radius
+FLY_SPEED  = 120.0        # fly max speed
+
+# Fly panic/fleeing tuning
+FLEE_PANIC_RANGE    = 220.0   # distance at which panic scaling starts kicking in
+FLEE_PANIC_EXPONENT = 2.4     # >1 = sharper, more dramatic ramp-up as distance shrinks
+FLEE_PANIC_MAX_MULT = 3.0     # maximum multiplier applied to evade force at point-blank range
+FLEE_BURST_STRENGTH = 260.0   # one-time velocity kick applied the instant a fly starts fleeing
+
+# Boids neighborhood and weights
+# These determine how flies react to neighbors
+NEIGHBOR_RADIUS = 150.0   # how far a fly considers other flies as neighbors
+REGROUP_RADIUS  = 500.0   # search radius for the nearest fly when totally alone
+REGROUP_WEIGHT  = 0.6     # how gently an isolated fly steers back toward the group
+SEP_RADIUS      = 34.0    # separation threshold distance
+SEP_WEIGHT      = 1.2     # weight for separation force
+COH_WEIGHT      = 1.6     # weight for cohesion force
+ALI_WEIGHT      = 0.8     # weight for alignment force
+ANCHOR_WEIGHT   = 0.6     # small pull to arena center to keep flock on screen
+
+# Arrive behavior
+# Slow inside slow radius and stop inside stop radius
+ARRIVE_SLOW_RADIUS  = 120.0
+ARRIVE_STOP_RADIUS  = 8.0
+ARRIVE_STOP_DAMPING = 14.0   # 1/seconds — higher = faster hard stop once inside stop radius
+ARRIVE_STOP_SNAP    = 2.0    # px/s — below this speed, snap directly to zero
+
+# Snake setup
+NUM_SNAKES  = 3
+SNAKE_RADIUS = 18
+SNAKE_SPEED  = 160.0
+
+# Snake perception ranges for FSM transitions
+AGGRO_RANGE   = 260.0     # start chasing when frog gets this close
+DEAGGRO_RANGE = 360.0     # stop chasing when frog moves this far
+
+# Obstacle avoidance tuning
+AVOID_LOOKAHEAD       = 260.0   # how far the snake looks ahead when checking a corridor
+AVOID_ANGLE_INCREMENT = 12      # degrees to rotate per step when searching for a free path
+AVOID_MAX_ANGLE       = 84      # maximum deviation to try on either side
+
+# Game rules
+START_HEALTH = 3                 # how many hits the frog can take
+FLIES_TO_WIN = 10                # win condition counter
+</file>
+
 <file path="entities/fly.py">
 # ============================================================================
 # fly.py
@@ -606,6 +543,7 @@ class Fly:
         self.scare_timer = 0.0   # counts down while nervous before calming
         self.idle_timer  = 0.0   # time spent far from frog
         self._rng_seed   = random.randint(0, 999999)
+        self._debug_neighbors = []   # cached neighbor list for debug neighbor-link drawing
 
     def sense_bubbles_close(self, bubbles, r):
         """Return True if any bubble is within range r of the fly."""
@@ -613,6 +551,12 @@ class Fly:
             if (b.pos - self.pos).length_squared() <= r * r:
                 return True
         return False
+
+    def _set_state(self, new_state):
+        """Switch FSM state and log the transition when it actually changes."""
+        if new_state != self.state:
+            debug_state.log_transition("Fly", id(self) % 1000, self.state.name, new_state.name)
+        self.state = new_state
 
     def update(self, dt, flies, frog, bounds_rect, bubbles):
         """
@@ -638,14 +582,21 @@ class Fly:
         # ---------------- FSM transitions ----------------
         if self.state == FlyState.Flock:
             if scared_by_frog or scared_by_bubble:
-                self.state = FlyState.Fleeing
+                self._set_state(FlyState.Fleeing)
                 self.scare_timer = 0.6
+                # One-time velocity kick directly away from threat
+                burst_dir = self.pos - frog.pos
+                if burst_dir.length_squared() > 0:
+                    burst_dir = burst_dir.normalize()
+                else:
+                    burst_dir = V2(0, -1)
+                self.vel += burst_dir * settings.FLEE_BURST_STRENGTH
             else:
                 # Build idle time only when calm and far
                 if dist_to_frog > IdleDistance:
                     self.idle_timer += dt
                     if self.idle_timer >= IdleDelay:
-                        self.state = FlyState.Idle
+                        self._set_state(FlyState.Idle)
                 else:
                     self.idle_timer = 0.0
 
@@ -654,17 +605,24 @@ class Fly:
             if calm:
                 self.scare_timer -= dt
                 if self.scare_timer <= 0:
-                    self.state = FlyState.Flock
+                    self._set_state(FlyState.Flock)
                     self.idle_timer = 0.0
             else:
                 self.scare_timer = 0.6
 
         elif self.state == FlyState.Idle:
             if scared_by_frog or scared_by_bubble:
-                self.state = FlyState.Fleeing
+                self._set_state(FlyState.Fleeing)
                 self.scare_timer = 0.6
+                # One-time velocity kick directly away from threat
+                burst_dir = self.pos - frog.pos
+                if burst_dir.length_squared() > 0:
+                    burst_dir = burst_dir.normalize()
+                else:
+                    burst_dir = V2(0, -1)
+                self.vel += burst_dir * settings.FLEE_BURST_STRENGTH
             elif dist_to_frog <= IdleDistance:
-                self.state = FlyState.Flock
+                self._set_state(FlyState.Flock)
                 self.idle_timer = 0.0
 
         # ---------------- State behaviours ----------------
@@ -676,8 +634,8 @@ class Fly:
                     continue
                 if (f.pos - self.pos).length_squared() <= NEIGHBOR_RADIUS ** 2:
                     neighbors.append((f.pos, f.vel))
+            self._debug_neighbors = neighbors   # cache for debug drawing
 
-            # TODO: compute boids forces
             if len(neighbors) == 0:
                 nearest = None
                 min_dist = settings.REGROUP_RADIUS
@@ -709,11 +667,16 @@ class Fly:
         elif self.state == FlyState.Fleeing:
             force = evade(self.pos, self.vel, frog.pos, frog.vel, FLY_SPEED)
 
+            # Scale evade force by proximity — the closer the frog, the sharper the panic
+            closeness = 1.0 - min(dist_to_frog, settings.FLEE_PANIC_RANGE) / settings.FLEE_PANIC_RANGE
+            panic_mult = 1.0 + (settings.FLEE_PANIC_MAX_MULT - 1.0) * (closeness ** settings.FLEE_PANIC_EXPONENT)
+            force *= panic_mult
+
             # Anchor blend so the group does not disappear off screen
             center = V2(bounds_rect.centerx, bounds_rect.centery)
             force += (center - self.pos) * ANCHOR_WEIGHT * 0.002
 
-            self.vel += limit(force, 340.0) * dt
+            self.vel += limit(force, 420.0) * dt
 
         elif self.state == FlyState.Idle:
             force = wander_force(self.vel, rng_seed=self._rng_seed)
@@ -741,6 +704,9 @@ class Fly:
         
         # Debug overlay when enabled
         if debug_state.DEBUG:
+            # Draw faint lines to each boid neighbor
+            for n_pos, n_vel in self._debug_neighbors:
+                pygame.draw.line(surf, (60, 90, 110), self.pos, n_pos, 1)
             # Draw velocity vector, NEIGHBOR_RADIUS perception, and state name
             perception_radii = [(NEIGHBOR_RADIUS, (100, 200, 255))]
             draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)
@@ -812,7 +778,9 @@ class Snake:
         self._avoid_angle = 0.0
 
     def set_state(self, st):
-        """Switch to a new FSM state."""
+        """Switch to a new FSM state and log the transition for debug overlay."""
+        if st != self.state:
+            debug_state.log_transition("Snake", id(self) % 1000, self.state.name, st.name)
         self.state = st
 
     def update(self, dt, frog):
@@ -1016,7 +984,7 @@ def main():
         Returns a tuple of (world, frog, flies, snakes).
         """
         world = World(WIDTH, HEIGHT)
-        frog = Frog((WIDTH * 0.5, HEIGHT * 0.5))
+        frog = Frog((WIDTH * 0.5, HEIGHT * 0.5), world.obstacles)
 
         # Generate cluster centers
         centers = []
@@ -1064,6 +1032,9 @@ def main():
     avg_close_speed = 0.0
     last_aggro_dist = None
 
+    # Click-to-inspect state for debug mode
+    inspected_entity = None
+
     # Game state for health, scoring, and endings
     health = START_HEALTH
     fly_count = 0
@@ -1094,8 +1065,10 @@ def main():
                     running = False
 
                 if e.key == pygame.K_F1:
-                    # F1 toggles debug overlay
+                    # F1 toggles debug overlay; clear inspect selection when turning off
                     debug_state.DEBUG = not debug_state.DEBUG
+                    if not debug_state.DEBUG:
+                        inspected_entity = None
 
                 if not game_over and e.key == pygame.K_SPACE:
                     # Space shoots a bubble from the frog mouth
@@ -1112,6 +1085,20 @@ def main():
             if not game_over and e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
                 # Left click sets a new move target for the frog
                 frog.set_target(pygame.mouse.get_pos())
+
+            if debug_state.DEBUG and e.type == pygame.MOUSEBUTTONDOWN and e.button == 3:
+                # Right-click: click-to-inspect nearest agent whose radius contains the click
+                mx, my = pygame.mouse.get_pos()
+                click_pos = V2(mx, my)
+                best = None
+                best_dist = float('inf')
+                candidates = list(flies) + list(snakes) + [frog]
+                for agent in candidates:
+                    d = (agent.pos - click_pos).length()
+                    if d <= agent.radius and d < best_dist:
+                        best_dist = d
+                        best = agent
+                inspected_entity = best  # None if nothing clicked = clear selection
 
         # ---------------- Update ----------------
         if not game_over:
@@ -1216,11 +1203,98 @@ def main():
         screen.blit(tips, (16, 68))
 
         if debug_state.DEBUG:
+            from entities.fly import FlyState
+            from entities.snake import SnakeState as _SnakeState
+
             for sl in sliders:
                 sl.draw(screen, font)
             if last_aggro_dist is not None:
                 hud_txt = font.render(f"Pursue closing speed: {avg_close_speed:.1f} px/s", True, (255, 150, 150))
                 screen.blit(hud_txt, (20, 220))
+
+            # Live FSM transition log — bottom-left corner, most recent at bottom
+            log_y_start = HEIGHT - 20 - len(debug_state.TRANSITION_LOG) * 22
+            for i, (ts, kind, idx, old_st, new_st) in enumerate(debug_state.TRANSITION_LOG):
+                entry = f"{ts} {kind}#{idx} {old_st} -> {new_st}"
+                log_surf = font.render(entry, True, (200, 230, 200))
+                screen.blit(log_surf, (16, log_y_start + i * 22))
+
+            # --- Stats panel (top-right corner) ---
+            fps_val   = clock.get_fps()
+            fly_flock   = sum(1 for f in flies if f.state == FlyState.Flock)
+            fly_flee    = sum(1 for f in flies if f.state == FlyState.Fleeing)
+            fly_idle    = sum(1 for f in flies if f.state == FlyState.Idle)
+            sn_counts   = {st: sum(1 for s in snakes if s.state == st) for st in _SnakeState}
+            stats_lines = [
+                f"FPS: {fps_val:.1f}",
+                f"Flies: Flock {fly_flock} | Fleeing {fly_flee} | Idle {fly_idle}",
+                f"Snakes: Patrol {sn_counts[_SnakeState.PatrolAway]+sn_counts[_SnakeState.PatrolHome]}"
+                f" | Aggro {sn_counts[_SnakeState.Aggro]}"
+                f" | Harmless {sn_counts[_SnakeState.Harmless]}"
+                f" | Confused {sn_counts[_SnakeState.Confused]}",
+                f"Bubbles: {len(frog.bubbles)}",
+                f"Particles: {len(particles)}",
+            ]
+            panel_w = 480
+            panel_h = len(stats_lines) * 22 + 10
+            panel_x = WIDTH - panel_w - 10
+            panel_y = 10
+            panel_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            panel_surf.fill((0, 0, 0, 140))
+            screen.blit(panel_surf, (panel_x, panel_y))
+            for li, line in enumerate(stats_lines):
+                ls = font.render(line, True, (220, 220, 255))
+                screen.blit(ls, (panel_x + 6, panel_y + 5 + li * 22))
+
+            # --- Click-to-inspect floating info box ---
+            # Clear selection if the inspected fly was caught
+            if inspected_entity in flies or inspected_entity is None or inspected_entity is frog or inspected_entity in snakes:
+                pass  # still valid
+            else:
+                inspected_entity = None
+
+            if inspected_entity is not None:
+                from entities.fly import Fly as _Fly
+                from entities.snake import Snake as _Snake
+                from entities.frog import Frog as _Frog
+                ent = inspected_entity
+                if isinstance(ent, _Fly):
+                    etype = "Fly"
+                elif isinstance(ent, _Snake):
+                    etype = "Snake"
+                else:
+                    etype = "Frog"
+
+                info_lines = [
+                    f"{etype}#{id(ent) % 1000}",
+                    f"Pos: ({int(ent.pos.x)}, {int(ent.pos.y)})",
+                    f"Speed: {ent.vel.length():.1f} px/s",
+                ]
+                if isinstance(ent, _Fly):
+                    info_lines.append(f"State: {ent.state.name}")
+                    if ent.state == FlyState.Fleeing:
+                        info_lines.append(f"scare_timer: {ent.scare_timer:.2f}s")
+                    elif ent.state == FlyState.Idle:
+                        info_lines.append(f"idle_timer: {ent.idle_timer:.2f}s")
+                elif isinstance(ent, _Snake):
+                    info_lines.append(f"State: {ent.state.name}")
+                    if ent.state == _SnakeState.Confused:
+                        info_lines.append(f"confused_timer: {ent.confused_timer:.2f}s")
+
+                ibox_w = 220
+                ibox_h = len(info_lines) * 22 + 10
+                ibox_x = int(ent.pos.x) + ent.radius + 8
+                ibox_y = int(ent.pos.y) - ibox_h - 8
+                # Clamp to screen
+                ibox_x = min(ibox_x, WIDTH - ibox_w - 4)
+                ibox_y = max(ibox_y, 4)
+                ibox_surf = pygame.Surface((ibox_w, ibox_h), pygame.SRCALPHA)
+                ibox_surf.fill((0, 0, 0, 180))
+                screen.blit(ibox_surf, (ibox_x, ibox_y))
+                pygame.draw.rect(screen, (100, 200, 255), (ibox_x, ibox_y, ibox_w, ibox_h), 1)
+                for li, line in enumerate(info_lines):
+                    ls = font.render(line, True, (230, 230, 255))
+                    screen.blit(ls, (ibox_x + 6, ibox_y + 5 + li * 22))
 
         # If game over, dim the screen and show a message
         if game_over:
@@ -1258,7 +1332,6 @@ if __name__ == "__main__":
 # ============================================================================
 
 import math
-from numpy import diff
 from pygame.math import Vector2 as V2
 from utils import limit, circlecast_hits_any_rect
 from settings import (
@@ -1347,10 +1420,10 @@ def boids_separation(me_pos, neighbors, sep_radius):
     if count > 0:
         steering /= count
         if steering.length() > 0:
-            return steering
+            return limit(steering, 1.5)
     return V2()
 
-def boids_cohesion(me_pos, neighbors, dead_zone_radius=6.0, slow_zone_radius=40.0):
+def boids_cohesion(me_pos, neighbors, dead_zone_radius=6.0, slow_zone_radius=30.0):
     """
     Pull toward the average position of neighbors.
     This mirrors arrive()'s slow/stop-radius idea, applied to a flocking force instead of a single target.

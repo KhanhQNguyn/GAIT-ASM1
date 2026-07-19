@@ -40,21 +40,29 @@ NUM_FLIES = 30           # how many flies spawn
 FLY_RADIUS = 8            # fly draw and collision radius
 FLY_SPEED  = 120.0        # fly max speed
 
+# Fly panic/fleeing tuning
+FLEE_PANIC_RANGE    = 220.0   # distance at which panic scaling starts kicking in
+FLEE_PANIC_EXPONENT = 2.4     # >1 = sharper, more dramatic ramp-up as distance shrinks
+FLEE_PANIC_MAX_MULT = 3.0     # maximum multiplier applied to evade force at point-blank range
+FLEE_BURST_STRENGTH = 260.0   # one-time velocity kick applied the instant a fly starts fleeing
+
 # Boids neighborhood and weights
 # These determine how flies react to neighbors
-NEIGHBOR_RADIUS = 120.0   # how far a fly considers other flies as neighbors
+NEIGHBOR_RADIUS = 150.0   # how far a fly considers other flies as neighbors
 REGROUP_RADIUS  = 500.0   # search radius for the nearest fly when totally alone
 REGROUP_WEIGHT  = 0.6     # how gently an isolated fly steers back toward the group
-SEP_RADIUS      = 50.0    # separation threshold distance
-SEP_WEIGHT      = 1.9     # weight for separation force
-COH_WEIGHT      = 0.9     # weight for cohesion force
+SEP_RADIUS      = 34.0    # separation threshold distance
+SEP_WEIGHT      = 1.2     # weight for separation force
+COH_WEIGHT      = 1.6     # weight for cohesion force
 ALI_WEIGHT      = 0.8     # weight for alignment force
 ANCHOR_WEIGHT   = 0.6     # small pull to arena center to keep flock on screen
 
 # Arrive behavior
 # Slow inside slow radius and stop inside stop radius
-ARRIVE_SLOW_RADIUS = 120.0
-ARRIVE_STOP_RADIUS = 8.0
+ARRIVE_SLOW_RADIUS  = 120.0
+ARRIVE_STOP_RADIUS  = 8.0
+ARRIVE_STOP_DAMPING = 14.0   # 1/seconds — higher = faster hard stop once inside stop radius
+ARRIVE_STOP_SNAP    = 2.0    # px/s — below this speed, snap directly to zero
 
 # Snake setup
 NUM_SNAKES  = 3

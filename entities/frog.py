@@ -16,9 +16,10 @@ from settings import (
     WIDTH, HEIGHT, WHITE, GREEN, BLUE,
     FROG_RADIUS, FROG_SPEED,
     BUBBLE_RADIUS, BUBBLE_SPEED, BUBBLE_LIFETIME,
-    HURT_INVULN
+    HURT_INVULN,
+    ARRIVE_STOP_RADIUS, ARRIVE_STOP_DAMPING, ARRIVE_STOP_SNAP
 )
-from utils import clamp, draw_debug_overlay
+from utils import clamp, draw_debug_overlay, circle_rect_intersect, nearest_point_on_rect
 import debug_state
 from steering import arrive, integrate_velocity
 
@@ -43,7 +44,7 @@ class Bubble:
         pygame.draw.circle(surf, WHITE, self.pos, BUBBLE_RADIUS, 2)
 
 class Frog:
-    def __init__(self, pos):
+    def __init__(self, pos, rects=None):
         self.pos = V2(pos)
         self.vel = V2()
         self.target = V2(pos)
@@ -51,6 +52,7 @@ class Frog:
         self.speed = FROG_SPEED
         self.facing = V2(1, 0)   # used to aim bubbles when frog is not moving
         self.bubbles = []
+        self.rects = rects if rects is not None else []
 
         # Hurt state setup. When hurt_timer > 0 the frog cannot be hit again.
         self.hurt_timer = 0.0
@@ -81,6 +83,14 @@ class Frog:
         # Integrate velocity with dt and clamp to max speed
         self.vel = integrate_velocity(self.vel, steer, dt, self.speed)
 
+        # Hard-stop damping when inside stop radius — converges fully rather than creeping
+        dist_to_target = (self.target - self.pos).length()
+        if dist_to_target < ARRIVE_STOP_RADIUS:
+            damping = max(0.0, 1.0 - dt * ARRIVE_STOP_DAMPING)
+            self.vel *= damping
+            if self.vel.length() < ARRIVE_STOP_SNAP:
+                self.vel = V2(0, 0)
+
         # Move the frog
         self.pos += self.vel * dt
 
@@ -91,6 +101,21 @@ class Frog:
         # Keep inside bounds
         self.pos.x = clamp(self.pos.x, self.radius, WIDTH - self.radius)
         self.pos.y = clamp(self.pos.y, self.radius, HEIGHT - self.radius)
+
+        # Push frog out of any obstacle rectangle it overlaps
+        for rect in self.rects:
+            if circle_rect_intersect(self.pos, self.radius, rect):
+                nearest = nearest_point_on_rect(self.pos, rect)
+                diff = self.pos - nearest
+                if diff.length_squared() > 0:
+                    push_dir = diff.normalize()
+                else:
+                    push_dir = V2(0, -1)
+                self.pos = nearest + push_dir * self.radius
+                # Kill velocity component pushing further into the obstacle
+                into_wall = self.vel.dot(push_dir)
+                if into_wall < 0:
+                    self.vel -= push_dir * into_wall
 
         # Update bubbles and remove popped ones
         for b in list(self.bubbles):

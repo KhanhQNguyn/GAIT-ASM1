@@ -47,6 +47,7 @@ class Fly:
         self.scare_timer = 0.0   # counts down while nervous before calming
         self.idle_timer  = 0.0   # time spent far from frog
         self._rng_seed   = random.randint(0, 999999)
+        self._debug_neighbors = []   # cached neighbor list for debug neighbor-link drawing
 
     def sense_bubbles_close(self, bubbles, r):
         """Return True if any bubble is within range r of the fly."""
@@ -54,6 +55,12 @@ class Fly:
             if (b.pos - self.pos).length_squared() <= r * r:
                 return True
         return False
+
+    def _set_state(self, new_state):
+        """Switch FSM state and log the transition when it actually changes."""
+        if new_state != self.state:
+            debug_state.log_transition("Fly", id(self) % 1000, self.state.name, new_state.name)
+        self.state = new_state
 
     def update(self, dt, flies, frog, bounds_rect, bubbles):
         """
@@ -79,14 +86,21 @@ class Fly:
         # ---------------- FSM transitions ----------------
         if self.state == FlyState.Flock:
             if scared_by_frog or scared_by_bubble:
-                self.state = FlyState.Fleeing
+                self._set_state(FlyState.Fleeing)
                 self.scare_timer = 0.6
+                # One-time velocity kick directly away from threat
+                burst_dir = self.pos - frog.pos
+                if burst_dir.length_squared() > 0:
+                    burst_dir = burst_dir.normalize()
+                else:
+                    burst_dir = V2(0, -1)
+                self.vel += burst_dir * settings.FLEE_BURST_STRENGTH
             else:
                 # Build idle time only when calm and far
                 if dist_to_frog > IdleDistance:
                     self.idle_timer += dt
                     if self.idle_timer >= IdleDelay:
-                        self.state = FlyState.Idle
+                        self._set_state(FlyState.Idle)
                 else:
                     self.idle_timer = 0.0
 
@@ -95,17 +109,24 @@ class Fly:
             if calm:
                 self.scare_timer -= dt
                 if self.scare_timer <= 0:
-                    self.state = FlyState.Flock
+                    self._set_state(FlyState.Flock)
                     self.idle_timer = 0.0
             else:
                 self.scare_timer = 0.6
 
         elif self.state == FlyState.Idle:
             if scared_by_frog or scared_by_bubble:
-                self.state = FlyState.Fleeing
+                self._set_state(FlyState.Fleeing)
                 self.scare_timer = 0.6
+                # One-time velocity kick directly away from threat
+                burst_dir = self.pos - frog.pos
+                if burst_dir.length_squared() > 0:
+                    burst_dir = burst_dir.normalize()
+                else:
+                    burst_dir = V2(0, -1)
+                self.vel += burst_dir * settings.FLEE_BURST_STRENGTH
             elif dist_to_frog <= IdleDistance:
-                self.state = FlyState.Flock
+                self._set_state(FlyState.Flock)
                 self.idle_timer = 0.0
 
         # ---------------- State behaviours ----------------
@@ -117,8 +138,8 @@ class Fly:
                     continue
                 if (f.pos - self.pos).length_squared() <= NEIGHBOR_RADIUS ** 2:
                     neighbors.append((f.pos, f.vel))
+            self._debug_neighbors = neighbors   # cache for debug drawing
 
-            # TODO: compute boids forces
             if len(neighbors) == 0:
                 nearest = None
                 min_dist = settings.REGROUP_RADIUS
@@ -150,11 +171,16 @@ class Fly:
         elif self.state == FlyState.Fleeing:
             force = evade(self.pos, self.vel, frog.pos, frog.vel, FLY_SPEED)
 
+            # Scale evade force by proximity — the closer the frog, the sharper the panic
+            closeness = 1.0 - min(dist_to_frog, settings.FLEE_PANIC_RANGE) / settings.FLEE_PANIC_RANGE
+            panic_mult = 1.0 + (settings.FLEE_PANIC_MAX_MULT - 1.0) * (closeness ** settings.FLEE_PANIC_EXPONENT)
+            force *= panic_mult
+
             # Anchor blend so the group does not disappear off screen
             center = V2(bounds_rect.centerx, bounds_rect.centery)
             force += (center - self.pos) * ANCHOR_WEIGHT * 0.002
 
-            self.vel += limit(force, 340.0) * dt
+            self.vel += limit(force, 420.0) * dt
 
         elif self.state == FlyState.Idle:
             force = wander_force(self.vel, rng_seed=self._rng_seed)
@@ -182,6 +208,9 @@ class Fly:
         
         # Debug overlay when enabled
         if debug_state.DEBUG:
+            # Draw faint lines to each boid neighbor
+            for n_pos, n_vel in self._debug_neighbors:
+                pygame.draw.line(surf, (60, 90, 110), self.pos, n_pos, 1)
             # Draw velocity vector, NEIGHBOR_RADIUS perception, and state name
             perception_radii = [(NEIGHBOR_RADIUS, (100, 200, 255))]
             draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)

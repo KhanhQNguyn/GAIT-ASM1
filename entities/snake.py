@@ -63,7 +63,9 @@ class Snake:
         self._avoid_angle = 0.0
 
     def set_state(self, st):
-        """Switch to a new FSM state."""
+        """Switch to a new FSM state and log the transition for debug overlay."""
+        if st != self.state:
+            debug_state.log_transition("Snake", id(self) % 1000, self.state.name, st.name)
         self.state = st
 
     def update(self, dt, frog):

@@ -82,7 +82,7 @@ def main():
         Returns a tuple of (world, frog, flies, snakes).
         """
         world = World(WIDTH, HEIGHT)
-        frog = Frog((WIDTH * 0.5, HEIGHT * 0.5))
+        frog = Frog((WIDTH * 0.5, HEIGHT * 0.5), world.obstacles)
 
         # Generate cluster centers
         centers = []
@@ -130,6 +130,9 @@ def main():
     avg_close_speed = 0.0
     last_aggro_dist = None
 
+    # Click-to-inspect state for debug mode
+    inspected_entity = None
+
     # Game state for health, scoring, and endings
     health = START_HEALTH
     fly_count = 0
@@ -160,8 +163,10 @@ def main():
                     running = False
 
                 if e.key == pygame.K_F1:
-                    # F1 toggles debug overlay
+                    # F1 toggles debug overlay; clear inspect selection when turning off
                     debug_state.DEBUG = not debug_state.DEBUG
+                    if not debug_state.DEBUG:
+                        inspected_entity = None
 
                 if not game_over and e.key == pygame.K_SPACE:
                     # Space shoots a bubble from the frog mouth
@@ -178,6 +183,20 @@ def main():
             if not game_over and e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
                 # Left click sets a new move target for the frog
                 frog.set_target(pygame.mouse.get_pos())
+
+            if debug_state.DEBUG and e.type == pygame.MOUSEBUTTONDOWN and e.button == 3:
+                # Right-click: click-to-inspect nearest agent whose radius contains the click
+                mx, my = pygame.mouse.get_pos()
+                click_pos = V2(mx, my)
+                best = None
+                best_dist = float('inf')
+                candidates = list(flies) + list(snakes) + [frog]
+                for agent in candidates:
+                    d = (agent.pos - click_pos).length()
+                    if d <= agent.radius and d < best_dist:
+                        best_dist = d
+                        best = agent
+                inspected_entity = best  # None if nothing clicked = clear selection
 
         # ---------------- Update ----------------
         if not game_over:
@@ -282,11 +301,98 @@ def main():
         screen.blit(tips, (16, 68))
 
         if debug_state.DEBUG:
+            from entities.fly import FlyState
+            from entities.snake import SnakeState as _SnakeState
+
             for sl in sliders:
                 sl.draw(screen, font)
             if last_aggro_dist is not None:
                 hud_txt = font.render(f"Pursue closing speed: {avg_close_speed:.1f} px/s", True, (255, 150, 150))
                 screen.blit(hud_txt, (20, 220))
+
+            # Live FSM transition log — bottom-left corner, most recent at bottom
+            log_y_start = HEIGHT - 20 - len(debug_state.TRANSITION_LOG) * 22
+            for i, (ts, kind, idx, old_st, new_st) in enumerate(debug_state.TRANSITION_LOG):
+                entry = f"{ts} {kind}#{idx} {old_st} -> {new_st}"
+                log_surf = font.render(entry, True, (200, 230, 200))
+                screen.blit(log_surf, (16, log_y_start + i * 22))
+
+            # --- Stats panel (top-right corner) ---
+            fps_val   = clock.get_fps()
+            fly_flock   = sum(1 for f in flies if f.state == FlyState.Flock)
+            fly_flee    = sum(1 for f in flies if f.state == FlyState.Fleeing)
+            fly_idle    = sum(1 for f in flies if f.state == FlyState.Idle)
+            sn_counts   = {st: sum(1 for s in snakes if s.state == st) for st in _SnakeState}
+            stats_lines = [
+                f"FPS: {fps_val:.1f}",
+                f"Flies: Flock {fly_flock} | Fleeing {fly_flee} | Idle {fly_idle}",
+                f"Snakes: Patrol {sn_counts[_SnakeState.PatrolAway]+sn_counts[_SnakeState.PatrolHome]}"
+                f" | Aggro {sn_counts[_SnakeState.Aggro]}"
+                f" | Harmless {sn_counts[_SnakeState.Harmless]}"
+                f" | Confused {sn_counts[_SnakeState.Confused]}",
+                f"Bubbles: {len(frog.bubbles)}",
+                f"Particles: {len(particles)}",
+            ]
+            panel_w = 480
+            panel_h = len(stats_lines) * 22 + 10
+            panel_x = WIDTH - panel_w - 10
+            panel_y = 10
+            panel_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            panel_surf.fill((0, 0, 0, 140))
+            screen.blit(panel_surf, (panel_x, panel_y))
+            for li, line in enumerate(stats_lines):
+                ls = font.render(line, True, (220, 220, 255))
+                screen.blit(ls, (panel_x + 6, panel_y + 5 + li * 22))
+
+            # --- Click-to-inspect floating info box ---
+            # Clear selection if the inspected fly was caught
+            if inspected_entity in flies or inspected_entity is None or inspected_entity is frog or inspected_entity in snakes:
+                pass  # still valid
+            else:
+                inspected_entity = None
+
+            if inspected_entity is not None:
+                from entities.fly import Fly as _Fly
+                from entities.snake import Snake as _Snake
+                from entities.frog import Frog as _Frog
+                ent = inspected_entity
+                if isinstance(ent, _Fly):
+                    etype = "Fly"
+                elif isinstance(ent, _Snake):
+                    etype = "Snake"
+                else:
+                    etype = "Frog"
+
+                info_lines = [
+                    f"{etype}#{id(ent) % 1000}",
+                    f"Pos: ({int(ent.pos.x)}, {int(ent.pos.y)})",
+                    f"Speed: {ent.vel.length():.1f} px/s",
+                ]
+                if isinstance(ent, _Fly):
+                    info_lines.append(f"State: {ent.state.name}")
+                    if ent.state == FlyState.Fleeing:
+                        info_lines.append(f"scare_timer: {ent.scare_timer:.2f}s")
+                    elif ent.state == FlyState.Idle:
+                        info_lines.append(f"idle_timer: {ent.idle_timer:.2f}s")
+                elif isinstance(ent, _Snake):
+                    info_lines.append(f"State: {ent.state.name}")
+                    if ent.state == _SnakeState.Confused:
+                        info_lines.append(f"confused_timer: {ent.confused_timer:.2f}s")
+
+                ibox_w = 220
+                ibox_h = len(info_lines) * 22 + 10
+                ibox_x = int(ent.pos.x) + ent.radius + 8
+                ibox_y = int(ent.pos.y) - ibox_h - 8
+                # Clamp to screen
+                ibox_x = min(ibox_x, WIDTH - ibox_w - 4)
+                ibox_y = max(ibox_y, 4)
+                ibox_surf = pygame.Surface((ibox_w, ibox_h), pygame.SRCALPHA)
+                ibox_surf.fill((0, 0, 0, 180))
+                screen.blit(ibox_surf, (ibox_x, ibox_y))
+                pygame.draw.rect(screen, (100, 200, 255), (ibox_x, ibox_y, ibox_w, ibox_h), 1)
+                for li, line in enumerate(info_lines):
+                    ls = font.render(line, True, (230, 230, 255))
+                    screen.blit(ls, (ibox_x + 6, ibox_y + 5 + li * 22))
 
         # If game over, dim the screen and show a message
         if game_over:
