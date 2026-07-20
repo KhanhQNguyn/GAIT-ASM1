@@ -121,6 +121,138 @@ def log_transition(kind, index, old_state, new_state):
         TRANSITION_LOG.pop(0)
 </file>
 
+<file path="utils.py">
+# ============================================================================
+# utils.py
+# Purpose
+#   Small helper functions that do not belong to a specific agent.
+#   Drawing helpers and collision checks live here.
+# Notes
+#   None of these helpers should change game rules or AI decisions.
+# ============================================================================
+
+import pygame
+from pygame.math import Vector2 as V2
+from settings import WIDTH, HEIGHT
+import pygame.gfxdraw
+
+# A soft grid color for the background
+GRID = (36, 42, 48)
+
+def draw_grid(surf):
+    """
+    Draw a light grid to help the eye judge motion and distance.
+    The grid has no effect on gameplay. It is only visual.
+    """
+    gap = 36  # distance between grid lines
+    # Draw vertical lines
+    for x in range(0, WIDTH, gap):
+        pygame.draw.line(surf, GRID, (x, 0), (x, HEIGHT))
+    # Draw horizontal lines
+    for y in range(0, HEIGHT, gap):
+        pygame.draw.line(surf, GRID, (0, y), (WIDTH, y))
+
+def clamp(x, a, b):
+    """Limit a scalar value x so it stays between a and b inclusive."""
+    return max(a, min(b, x))
+
+def limit(v, max_len):
+    """
+    Limit a vector length.
+    If v is longer than max_len, scale it down to exactly max_len.
+    """
+    if v.length_squared() > max_len * max_len:
+        v.scale_to_length(max_len)
+    return v
+
+def nearest_point_on_rect(point, rect):
+    """Return the closest point on an axis aligned rectangle to a given point."""
+    x = clamp(point.x, rect.left, rect.right)
+    y = clamp(point.y, rect.top, rect.bottom)
+    return V2(x, y)
+
+def circle_rect_intersect(center, radius, rect):
+    """Return True if a circle touches or overlaps a rectangle."""
+    np = nearest_point_on_rect(center, rect)
+    return (center - np).length_squared() <= radius * radius
+
+def segment_circlecast_hits_rect(p0, p1, radius, rect, step=6.0):
+    """
+    Approximate a circle cast along a line from p0 to p1.
+    We sample points along the segment and test a circle intersect at each step.
+    """
+    d = p1 - p0
+    length = d.length()
+    if length == 0:
+        return circle_rect_intersect(p0, radius, rect)
+    n = max(1, int(length / step))
+    for i in range(n + 1):
+        t = i / n
+        pos = p0 + d * t
+        if circle_rect_intersect(pos, radius, rect):
+            return True
+    return False
+
+def circlecast_hits_any_rect(p0, p1, radius, rects, step=6.0):
+    """Return True if the swept circle between p0 and p1 hits any rect in the list."""
+    for r in rects:
+        if segment_circlecast_hits_rect(p0, p1, radius, r, step):
+            return True
+    return False
+
+def draw_debug_overlay(surf, pos, vel, perception_radii, state_name=None):
+    """
+    Draw debug overlay for an entity: velocity vector, perception radii, and state name.
+    
+    Parameters:
+      surf: pygame surface to draw on
+      pos: entity position (V2)
+      vel: entity velocity (V2)
+      perception_radii: list of (radius_value, color) tuples to draw as circles
+      state_name: string name of state to render, or None to skip state text
+    """
+    # Draw velocity vector scaled by 0.3
+    if vel.length_squared() > 0.01:
+        vel_end = pos + vel * 0.3
+        pygame.draw.line(surf, (255, 100, 100), pos, vel_end, 2)
+        # Small arrow head
+        if vel.length() > 1:
+            arrow_dir = vel.normalize()
+            arrow_left = arrow_dir.rotate(150) * 6
+            arrow_right = arrow_dir.rotate(-150) * 6
+            pygame.draw.line(surf, (255, 100, 100), vel_end, vel_end + arrow_left, 1)
+            pygame.draw.line(surf, (255, 100, 100), vel_end, vel_end + arrow_right, 1)
+    
+    # Draw perception radius circles
+    for radius, color in perception_radii:
+        pygame.draw.circle(surf, color, pos, radius, 1)
+    
+    # Draw state name as small text above entity
+    if state_name is not None:
+        from pygame.font import Font
+        tiny_font = Font(None, 18)
+        txt = tiny_font.render(state_name, True, (200, 200, 200))
+        text_rect = txt.get_rect(midbottom=(int(pos.x), int(pos.y) - 20))
+        surf.blit(txt, text_rect)
+
+def draw_heart(screen, x, y, color):
+    pts = [
+        (x + 6, y + 18),
+        (x + 17, y + 12),
+        (x + 20, y + 5),
+        (x + 16, y - 1),
+        (x + 10, y - 2),
+        (x + 6, y + 2),
+        (x + 2, y - 2),
+        (x - 4, y - 1),
+        (x - 8, y + 5),
+        (x - 5, y + 12),
+    ]
+
+    pygame.gfxdraw.aapolygon(screen, pts, (30, 30, 30))
+    pygame.gfxdraw.filled_polygon(screen, pts, color)
+</file>
+
 <file path="entities/frog.py">
 # ============================================================================
 # frog.py
@@ -275,136 +407,207 @@ class Frog:
             draw_debug_overlay(surf, self.pos, self.vel, [], "n/a")
 </file>
 
-<file path="utils.py">
+<file path="entities/snake.py">
 # ============================================================================
-# utils.py
+# snake.py
 # Purpose
-#   Small helper functions that do not belong to a specific agent.
-#   Drawing helpers and collision checks live here.
-# Notes
-#   None of these helpers should change game rules or AI decisions.
+#   Predator agent with a five-state FSM.
+#   States: PatrolAway, PatrolHome, Aggro, Harmless, Confused.
+#   Aggro chases the frog. Harmless returns home after pacification.
+#   Confused wanders briefly after reaching home, then resumes patrol.
+# Update order
+#   Evaluate transitions first, then run the behavior for the active state.
+# Drawing
+#   Simple circle with a tiny eye that turns toward the current velocity.
 # ============================================================================
 
+from enum import Enum, auto
+import math, random
 import pygame
 from pygame.math import Vector2 as V2
-from settings import WIDTH, HEIGHT
-import pygame.gfxdraw
+import settings
+from settings import (
+    WIDTH, HEIGHT, WHITE,
+    SNAKE_RADIUS, SNAKE_SPEED, DEAGGRO_RANGE
+)
+from utils import draw_debug_overlay, nearest_point_on_rect, clamp, circle_rect_intersect
+import debug_state
+from steering import arrive, seek, seek_with_avoid, integrate_velocity, pursue, wander_force, predict_future_position
 
-# A soft grid color for the background
-GRID = (36, 42, 48)
+class SnakeState(Enum):
+    PatrolAway = auto()
+    PatrolHome = auto()
+    Aggro      = auto()
+    Harmless   = auto()
+    Confused   = auto()
 
-def draw_grid(surf):
-    """
-    Draw a light grid to help the eye judge motion and distance.
-    The grid has no effect on gameplay. It is only visual.
-    """
-    gap = 36  # distance between grid lines
-    # Draw vertical lines
-    for x in range(0, WIDTH, gap):
-        pygame.draw.line(surf, GRID, (x, 0), (x, HEIGHT))
-    # Draw horizontal lines
-    for y in range(0, HEIGHT, gap):
-        pygame.draw.line(surf, GRID, (0, y), (WIDTH, y))
+class Snake:
+    def __init__(self, pos, patrol_point, rects):
+        # Motion and shape
+        self.pos = V2(pos)
+        self.vel = V2(1, 0)
+        self.radius = SNAKE_RADIUS
+        self.speed = SNAKE_SPEED
 
-def clamp(x, a, b):
-    """Limit a scalar value x so it stays between a and b inclusive."""
-    return max(a, min(b, x))
+        # Home base and patrol destination
+        self.home = V2(pos)
+        self.patrol_point = V2(patrol_point)
 
-def limit(v, max_len):
-    """
-    Limit a vector length.
-    If v is longer than max_len, scale it down to exactly max_len.
-    """
-    if v.length_squared() > max_len * max_len:
-        v.scale_to_length(max_len)
-    return v
+        # Initial state
+        self.state = SnakeState.PatrolAway
 
-def nearest_point_on_rect(point, rect):
-    """Return the closest point on an axis aligned rectangle to a given point."""
-    x = clamp(point.x, rect.left, rect.right)
-    y = clamp(point.y, rect.top, rect.bottom)
-    return V2(x, y)
+        # Obstacles for avoidance
+        self.rects = rects
 
-def circle_rect_intersect(center, radius, rect):
-    """Return True if a circle touches or overlaps a rectangle."""
-    np = nearest_point_on_rect(center, rect)
-    return (center - np).length_squared() <= radius * radius
+        # Drawing hint for head direction
+        self.heading_deg = 0.0
 
-def segment_circlecast_hits_rect(p0, p1, radius, rect, step=6.0):
-    """
-    Approximate a circle cast along a line from p0 to p1.
-    We sample points along the segment and test a circle intersect at each step.
-    """
-    d = p1 - p0
-    length = d.length()
-    if length == 0:
-        return circle_rect_intersect(p0, radius, rect)
-    n = max(1, int(length / step))
-    for i in range(n + 1):
-        t = i / n
-        pos = p0 + d * t
-        if circle_rect_intersect(pos, radius, rect):
-            return True
-    return False
+        # Color varies by state for quick visual debug
+        self.color = (190, 130, 110)
 
-def circlecast_hits_any_rect(p0, p1, radius, rects, step=6.0):
-    """Return True if the swept circle between p0 and p1 hits any rect in the list."""
-    for r in rects:
-        if segment_circlecast_hits_rect(p0, p1, radius, r, step):
-            return True
-    return False
+        # Confused state timer
+        self.confused_timer = 0.0
 
-def draw_debug_overlay(surf, pos, vel, perception_radii, state_name=None):
-    """
-    Draw debug overlay for an entity: velocity vector, perception radii, and state name.
-    
-    Parameters:
-      surf: pygame surface to draw on
-      pos: entity position (V2)
-      vel: entity velocity (V2)
-      perception_radii: list of (radius_value, color) tuples to draw as circles
-      state_name: string name of state to render, or None to skip state text
-    """
-    # Draw velocity vector scaled by 0.3
-    if vel.length_squared() > 0.01:
-        vel_end = pos + vel * 0.3
-        pygame.draw.line(surf, (255, 100, 100), pos, vel_end, 2)
-        # Small arrow head
-        if vel.length() > 1:
-            arrow_dir = vel.normalize()
-            arrow_left = arrow_dir.rotate(150) * 6
-            arrow_right = arrow_dir.rotate(-150) * 6
-            pygame.draw.line(surf, (255, 100, 100), vel_end, vel_end + arrow_left, 1)
-            pygame.draw.line(surf, (255, 100, 100), vel_end, vel_end + arrow_right, 1)
-    
-    # Draw perception radius circles
-    for radius, color in perception_radii:
-        pygame.draw.circle(surf, color, pos, radius, 1)
-    
-    # Draw state name as small text above entity
-    if state_name is not None:
-        from pygame.font import Font
-        tiny_font = Font(None, 18)
-        txt = tiny_font.render(state_name, True, (200, 200, 200))
-        text_rect = txt.get_rect(midbottom=(int(pos.x), int(pos.y) - 20))
-        surf.blit(txt, text_rect)
+        # RNG for wander if needed
+        self._rng_seed = random.randint(0, 999999)
+        self._avoid_angle = 0.0
 
-def draw_heart(screen, x, y, color):
-    pts = [
-        (x + 6, y + 18),
-        (x + 17, y + 12),
-        (x + 20, y + 5),
-        (x + 16, y - 1),
-        (x + 10, y - 2),
-        (x + 6, y + 2),
-        (x + 2, y - 2),
-        (x - 4, y - 1),
-        (x - 8, y + 5),
-        (x - 5, y + 12),
-    ]
+    def set_state(self, st):
+        """Switch to a new FSM state and log the transition for debug overlay."""
+        if st != self.state:
+            debug_state.log_transition("Snake", id(self) % 1000, self.state.name, st.name)
+        self.state = st
 
-    pygame.gfxdraw.aapolygon(screen, pts, (30, 30, 30))
-    pygame.gfxdraw.filled_polygon(screen, pts, color)
+    def update(self, dt, frog):
+        """
+        Update state transitions based on distance to frog and timers.
+        Then compute a steering force for the active state and integrate motion.
+        """
+
+        # Distance to frog for transitions
+        dist = (frog.pos - self.pos).length()
+
+        # ---------------- FSM transitions ----------------
+        if self.state == SnakeState.Aggro:
+            if dist > DEAGGRO_RANGE:
+                self.set_state(SnakeState.PatrolHome)
+
+        elif self.state in (SnakeState.PatrolHome, SnakeState.PatrolAway):
+            if dist < settings.AGGRO_RANGE:
+                self.set_state(SnakeState.Aggro)
+
+        elif self.state == SnakeState.Harmless:
+            # When harmless snake reaches home, enter Confused briefly then resume patrol
+            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
+                self.confused_timer = settings.SNAKE_CONFUSED_DURATION
+                self.set_state(SnakeState.Confused)
+
+        elif self.state == SnakeState.Confused:
+            self.confused_timer -= dt
+            if self.confused_timer <= 0:
+                self.set_state(SnakeState.PatrolAway)
+
+        # ---------------- State behaviours ----------------
+        min_obstacle_dist = float('inf')
+        for r in self.rects:
+            np = nearest_point_on_rect(self.pos, r)
+            d = (self.pos - np).length()
+            if d < min_obstacle_dist:
+                min_obstacle_dist = d
+        
+        # Scale avoid_weight from min (far from obstacle) up to max (right next to one)
+        t = clamp((settings.SNAKE_AVOID_NEAR_DIST - min_obstacle_dist) / settings.SNAKE_AVOID_NEAR_DIST, 0.0, 1.0)
+        avoid_weight = settings.SNAKE_AVOID_WEIGHT_MIN + (settings.SNAKE_AVOID_WEIGHT_MAX - settings.SNAKE_AVOID_WEIGHT_MIN) * t
+
+        if self.state == SnakeState.Aggro:
+            self.color = (255, 150, 150)
+            # Predict where the frog will be, then let the corridor search pick the actual
+            # direction toward that point — avoidance has full authority when something is
+            # in the way, instead of being a weak add-on to a separately-computed chase force
+            predicted = predict_future_position(self.pos, frog.pos, frog.vel, self.speed)
+            steer, self._avoid_angle = seek_with_avoid(
+                self.pos, self.vel, predicted, self.speed, self.radius, self.rects,
+                preferred_angle=self._avoid_angle)
+
+        elif self.state == SnakeState.PatrolAway:
+            self.color = (180, 200, 255)
+            steer = arrive(self.pos, self.vel, self.patrol_point, self.speed)
+            if (self.patrol_point - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
+                self.set_state(SnakeState.PatrolHome)
+            avoid_force, self._avoid_angle = seek_with_avoid(
+                self.pos, self.vel, self.patrol_point, self.speed, self.radius, self.rects,
+                preferred_angle=self._avoid_angle)
+            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+
+        elif self.state == SnakeState.PatrolHome:
+            self.color = (180, 220, 180)
+            steer = arrive(self.pos, self.vel, self.home, self.speed)
+            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
+                self.set_state(SnakeState.PatrolAway)
+            avoid_force, self._avoid_angle = seek_with_avoid(
+                self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
+                preferred_angle=self._avoid_angle)
+            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+
+        elif self.state == SnakeState.Harmless:
+            self.color = (190, 180, 255)
+            steer = arrive(self.pos, self.vel, self.home, self.speed * settings.SNAKE_HARMLESS_SPEED_MULT)
+            avoid_force, self._avoid_angle = seek_with_avoid(
+                self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
+                preferred_angle=self._avoid_angle)
+            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+
+        else:  # Confused
+            self.color = (245, 210, 160)
+            steer = wander_force(self.vel, rng_seed=self._rng_seed)
+
+        # Integrate velocity and update position
+        self.vel = integrate_velocity(self.vel, steer, dt, self.speed)
+        self.pos += self.vel * dt
+
+        # Hard fallback: guarantee the snake never ends up overlapping an obstacle, even on
+        # frames where the soft avoidance steering wasn't enough (tight corners, high speed)
+        for rect in self.rects:
+            if circle_rect_intersect(self.pos, self.radius, rect):
+                nearest = nearest_point_on_rect(self.pos, rect)
+                diff = self.pos - nearest
+                if diff.length_squared() > 0:
+                    push_dir = diff.normalize()
+                else:
+                    push_dir = V2(0, -1)
+                self.pos = nearest + push_dir * self.radius
+                into_wall = self.vel.dot(push_dir)
+                if into_wall < 0:
+                    self.vel -= push_dir * into_wall
+
+        # Smooth eye heading based on velocity
+        spd = self.vel.length()
+        if spd > 4:
+            def lerp(a, b, t): return a + (b - a) * t
+            self.heading_deg = lerp(self.heading_deg, math.degrees(math.atan2(self.vel.y, self.vel.x)), 0.15)
+
+        # Keep inside arena
+        if self.pos.x < self.radius: self.pos.x = self.radius
+        if self.pos.x > WIDTH - self.radius: self.pos.x = WIDTH - self.radius
+        if self.pos.y < self.radius: self.pos.y = self.radius
+        if self.pos.y > HEIGHT - self.radius: self.pos.y = HEIGHT - self.radius
+
+    def draw(self, surf):
+        # Body
+        pygame.draw.circle(surf, self.color, self.pos, self.radius)
+        # Simple eye in heading direction
+        head = self.pos + V2(1, 0).rotate(self.heading_deg) * (self.radius - 2)
+        pygame.draw.circle(surf, (30, 30, 30), head, 3)
+        pygame.draw.circle(surf, WHITE, head, 5, 1)
+        
+        # Debug overlay when enabled
+        if debug_state.DEBUG:
+            # Draw velocity vector, AGGRO_RANGE and DEAGGRO_RANGE, and state name
+            perception_radii = [
+                (settings.AGGRO_RANGE, (255, 100, 100)),    # red for aggro range
+                (DEAGGRO_RANGE, (100, 100, 255))   # blue for deaggro range
+            ]
+            draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)
 </file>
 
 <file path="entities/fly.py">
@@ -669,209 +872,6 @@ class Fly:
                 pygame.draw.line(surf, (60, 90, 110), self.pos, n_pos, 1)
             # Draw velocity vector, NEIGHBOR_RADIUS perception, and state name
             perception_radii = [(NEIGHBOR_RADIUS, (100, 200, 255))]
-            draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)
-</file>
-
-<file path="entities/snake.py">
-# ============================================================================
-# snake.py
-# Purpose
-#   Predator agent with a five-state FSM.
-#   States: PatrolAway, PatrolHome, Aggro, Harmless, Confused.
-#   Aggro chases the frog. Harmless returns home after pacification.
-#   Confused wanders briefly after reaching home, then resumes patrol.
-# Update order
-#   Evaluate transitions first, then run the behavior for the active state.
-# Drawing
-#   Simple circle with a tiny eye that turns toward the current velocity.
-# ============================================================================
-
-from enum import Enum, auto
-import math, random
-import pygame
-from pygame.math import Vector2 as V2
-import settings
-from settings import (
-    WIDTH, HEIGHT, WHITE,
-    SNAKE_RADIUS, SNAKE_SPEED, DEAGGRO_RANGE
-)
-from utils import draw_debug_overlay, nearest_point_on_rect, clamp, circle_rect_intersect
-import debug_state
-from steering import arrive, seek, seek_with_avoid, integrate_velocity, pursue, wander_force, predict_future_position
-
-class SnakeState(Enum):
-    PatrolAway = auto()
-    PatrolHome = auto()
-    Aggro      = auto()
-    Harmless   = auto()
-    Confused   = auto()
-
-class Snake:
-    def __init__(self, pos, patrol_point, rects):
-        # Motion and shape
-        self.pos = V2(pos)
-        self.vel = V2(1, 0)
-        self.radius = SNAKE_RADIUS
-        self.speed = SNAKE_SPEED
-
-        # Home base and patrol destination
-        self.home = V2(pos)
-        self.patrol_point = V2(patrol_point)
-
-        # Initial state
-        self.state = SnakeState.PatrolAway
-
-        # Obstacles for avoidance
-        self.rects = rects
-
-        # Drawing hint for head direction
-        self.heading_deg = 0.0
-
-        # Color varies by state for quick visual debug
-        self.color = (190, 130, 110)
-
-        # Confused state timer
-        self.confused_timer = 0.0
-
-        # RNG for wander if needed
-        self._rng_seed = random.randint(0, 999999)
-        self._avoid_angle = 0.0
-
-    def set_state(self, st):
-        """Switch to a new FSM state and log the transition for debug overlay."""
-        if st != self.state:
-            debug_state.log_transition("Snake", id(self) % 1000, self.state.name, st.name)
-        self.state = st
-
-    def update(self, dt, frog):
-        """
-        Update state transitions based on distance to frog and timers.
-        Then compute a steering force for the active state and integrate motion.
-        """
-
-        # Distance to frog for transitions
-        dist = (frog.pos - self.pos).length()
-
-        # ---------------- FSM transitions ----------------
-        if self.state == SnakeState.Aggro:
-            if dist > DEAGGRO_RANGE:
-                self.set_state(SnakeState.PatrolHome)
-
-        elif self.state in (SnakeState.PatrolHome, SnakeState.PatrolAway):
-            if dist < settings.AGGRO_RANGE:
-                self.set_state(SnakeState.Aggro)
-
-        elif self.state == SnakeState.Harmless:
-            # When harmless snake reaches home, enter Confused briefly then resume patrol
-            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
-                self.confused_timer = settings.SNAKE_CONFUSED_DURATION
-                self.set_state(SnakeState.Confused)
-
-        elif self.state == SnakeState.Confused:
-            self.confused_timer -= dt
-            if self.confused_timer <= 0:
-                self.set_state(SnakeState.PatrolAway)
-
-        # ---------------- State behaviours ----------------
-        min_obstacle_dist = float('inf')
-        for r in self.rects:
-            np = nearest_point_on_rect(self.pos, r)
-            d = (self.pos - np).length()
-            if d < min_obstacle_dist:
-                min_obstacle_dist = d
-        
-        # Scale avoid_weight from min (far from obstacle) up to max (right next to one)
-        t = clamp((settings.SNAKE_AVOID_NEAR_DIST - min_obstacle_dist) / settings.SNAKE_AVOID_NEAR_DIST, 0.0, 1.0)
-        avoid_weight = settings.SNAKE_AVOID_WEIGHT_MIN + (settings.SNAKE_AVOID_WEIGHT_MAX - settings.SNAKE_AVOID_WEIGHT_MIN) * t
-
-        if self.state == SnakeState.Aggro:
-            self.color = (255, 150, 150)
-            # Predict where the frog will be, then let the corridor search pick the actual
-            # direction toward that point — avoidance has full authority when something is
-            # in the way, instead of being a weak add-on to a separately-computed chase force
-            predicted = predict_future_position(self.pos, frog.pos, frog.vel, self.speed)
-            steer, self._avoid_angle = seek_with_avoid(
-                self.pos, self.vel, predicted, self.speed, self.radius, self.rects,
-                preferred_angle=self._avoid_angle)
-
-        elif self.state == SnakeState.PatrolAway:
-            self.color = (180, 200, 255)
-            steer = arrive(self.pos, self.vel, self.patrol_point, self.speed)
-            if (self.patrol_point - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
-                self.set_state(SnakeState.PatrolHome)
-            avoid_force, self._avoid_angle = seek_with_avoid(
-                self.pos, self.vel, self.patrol_point, self.speed, self.radius, self.rects,
-                preferred_angle=self._avoid_angle)
-            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
-
-        elif self.state == SnakeState.PatrolHome:
-            self.color = (180, 220, 180)
-            steer = arrive(self.pos, self.vel, self.home, self.speed)
-            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
-                self.set_state(SnakeState.PatrolAway)
-            avoid_force, self._avoid_angle = seek_with_avoid(
-                self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
-                preferred_angle=self._avoid_angle)
-            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
-
-        elif self.state == SnakeState.Harmless:
-            self.color = (190, 180, 255)
-            steer = arrive(self.pos, self.vel, self.home, self.speed * settings.SNAKE_HARMLESS_SPEED_MULT)
-            avoid_force, self._avoid_angle = seek_with_avoid(
-                self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
-                preferred_angle=self._avoid_angle)
-            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
-
-        else:  # Confused
-            self.color = (245, 210, 160)
-            steer = wander_force(self.vel, rng_seed=self._rng_seed)
-
-        # Integrate velocity and update position
-        self.vel = integrate_velocity(self.vel, steer, dt, self.speed)
-        self.pos += self.vel * dt
-
-        # Hard fallback: guarantee the snake never ends up overlapping an obstacle, even on
-        # frames where the soft avoidance steering wasn't enough (tight corners, high speed)
-        for rect in self.rects:
-            if circle_rect_intersect(self.pos, self.radius, rect):
-                nearest = nearest_point_on_rect(self.pos, rect)
-                diff = self.pos - nearest
-                if diff.length_squared() > 0:
-                    push_dir = diff.normalize()
-                else:
-                    push_dir = V2(0, -1)
-                self.pos = nearest + push_dir * self.radius
-                into_wall = self.vel.dot(push_dir)
-                if into_wall < 0:
-                    self.vel -= push_dir * into_wall
-
-        # Smooth eye heading based on velocity
-        spd = self.vel.length()
-        if spd > 4:
-            def lerp(a, b, t): return a + (b - a) * t
-            self.heading_deg = lerp(self.heading_deg, math.degrees(math.atan2(self.vel.y, self.vel.x)), 0.15)
-
-        # Keep inside arena
-        if self.pos.x < self.radius: self.pos.x = self.radius
-        if self.pos.x > WIDTH - self.radius: self.pos.x = WIDTH - self.radius
-        if self.pos.y < self.radius: self.pos.y = self.radius
-        if self.pos.y > HEIGHT - self.radius: self.pos.y = HEIGHT - self.radius
-
-    def draw(self, surf):
-        # Body
-        pygame.draw.circle(surf, self.color, self.pos, self.radius)
-        # Simple eye in heading direction
-        head = self.pos + V2(1, 0).rotate(self.heading_deg) * (self.radius - 2)
-        pygame.draw.circle(surf, (30, 30, 30), head, 3)
-        pygame.draw.circle(surf, WHITE, head, 5, 1)
-        
-        # Debug overlay when enabled
-        if debug_state.DEBUG:
-            # Draw velocity vector, AGGRO_RANGE and DEAGGRO_RANGE, and state name
-            perception_radii = [
-                (settings.AGGRO_RANGE, (255, 100, 100)),    # red for aggro range
-                (DEAGGRO_RANGE, (100, 100, 255))   # blue for deaggro range
-            ]
             draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)
 </file>
 
