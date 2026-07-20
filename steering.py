@@ -10,10 +10,11 @@
 
 import math
 from pygame.math import Vector2 as V2
-from utils import limit, circlecast_hits_any_rect
+from utils import limit, circlecast_hits_any_rect, nearest_point_on_rect
 from settings import (
     ARRIVE_SLOW_RADIUS, ARRIVE_STOP_RADIUS,
-    AVOID_LOOKAHEAD, AVOID_ANGLE_INCREMENT, AVOID_MAX_ANGLE
+    AVOID_LOOKAHEAD, AVOID_ANGLE_INCREMENT, AVOID_MAX_ANGLE,
+    ALI_STRENGTH
 )
 
 # ---------------- Base behaviours ----------------
@@ -97,7 +98,7 @@ def boids_separation(me_pos, neighbors, sep_radius):
     if count > 0:
         steering /= count
         if steering.length() > 0:
-            return limit(steering, 1.5)
+            return limit(steering, 2.5)
     return V2()
 
 def boids_cohesion(me_pos, neighbors, dead_zone_radius=6.0, slow_zone_radius=30.0):
@@ -137,10 +138,15 @@ def boids_alignment(me_vel, neighbors):
     for n_pos, n_vel in neighbors:
         avg_vel += n_vel
     avg_vel /= len(neighbors)
-    
-    steering = avg_vel - me_vel
-    
-    return steering * 0.1
+
+    diff = avg_vel - me_vel
+    if diff.length_squared() == 0:
+        return V2()
+    # Scale relative to a reference speed difference (60 px/s) so the result sits in
+    # roughly the same magnitude range as separation/cohesion, instead of the old fixed
+    # 0.1 factor which made alignment converge too slowly to ever look parallel.
+    norm = min(diff.length() / 60.0, 1.0)
+    return diff.normalize() * norm * ALI_STRENGTH
 
 # ---------------- Obstacle avoidance blend ----------------
 
@@ -184,11 +190,38 @@ def seek_with_avoid(pos, vel, target, max_speed, radius, rects, preferred_angle=
             desired = check_dir * max_speed
             return (desired - vel, angle)
             
-    # Nếu bị bao vây 4 phía không còn đường thoát, ráng lách thẳng hướng cũ nhưng chậm lại
-    desired = base_dir * max_speed
+    # If every tested angle is still blocked, don't ram forward — back away from the nearest
+    # obstacle instead, so the snake repositions and gets a fresh angle to search from next frame
+    nearest_obstacle_point = None
+    nearest_dist = float('inf')
+    for r in rects:
+        np = nearest_point_on_rect(pos, r)
+        d = (pos - np).length()
+        if d < nearest_dist:
+            nearest_dist = d
+            nearest_obstacle_point = np
+
+    if nearest_obstacle_point is not None and nearest_dist < radius * 3:
+        away = pos - nearest_obstacle_point
+        retreat_dir = away.normalize() if away.length_squared() > 0 else -base_dir
+        desired = retreat_dir * max_speed * 0.6
+    else:
+        # Not actually touching anything nearby — safe to creep forward slowly and re-try
+        desired = base_dir * max_speed * 0.4
+
     return (desired - vel, 0.0)
 
 # ---------------- New behaviours to be implemented ----------------
+
+def predict_future_position(pos, target_pos, target_vel, max_speed):
+    """
+    Shared prediction helper used by pursue(), evade(), and Aggro's unified
+    seek_with_avoid call. Returns the predicted future position of a moving target.
+    """
+    small_eps = 1e-6
+    distance = (target_pos - pos).length()
+    time_horizon = min(distance / (max_speed + small_eps), 2.0)
+    return target_pos + target_vel * time_horizon
 
 def pursue(pos, vel, target_pos, target_vel, max_speed):
     """
@@ -200,10 +233,7 @@ def pursue(pos, vel, target_pos, target_vel, max_speed):
       return seek toward predicted
     Replace simple seek in Snake Aggro with pursue for better interception.
     """
-    small_eps = 1e-6
-    distance = (target_pos - pos).length()
-    time_horizon = distance / (max_speed + small_eps)
-    predicted = target_pos + target_vel * time_horizon
+    predicted = predict_future_position(pos, target_pos, target_vel, max_speed)
     return seek(pos, vel, predicted, max_speed)
 
 def evade(pos, vel, threat_pos, threat_vel, max_speed):
@@ -211,10 +241,7 @@ def evade(pos, vel, threat_pos, threat_vel, max_speed):
     Predict the future position of a threat then flee from that point.
     This is the inverse of pursue. Use the same prediction idea.
     """
-    small_eps = 1e-6
-    distance = (threat_pos - pos).length()
-    time_horizon = distance / (max_speed + small_eps)
-    predicted = threat_pos + threat_vel * time_horizon
+    predicted = predict_future_position(pos, threat_pos, threat_vel, max_speed)
     return flee(pos, vel, predicted, max_speed)
 import random
 

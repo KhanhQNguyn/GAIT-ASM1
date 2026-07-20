@@ -20,9 +20,9 @@ from settings import (
     WIDTH, HEIGHT, WHITE,
     SNAKE_RADIUS, SNAKE_SPEED, DEAGGRO_RANGE
 )
-from utils import draw_debug_overlay, nearest_point_on_rect, clamp
+from utils import draw_debug_overlay, nearest_point_on_rect, clamp, circle_rect_intersect
 import debug_state
-from steering import arrive, seek, seek_with_avoid, integrate_velocity, pursue, wander_force
+from steering import arrive, seek, seek_with_avoid, integrate_velocity, pursue, wander_force, predict_future_position
 
 class SnakeState(Enum):
     PatrolAway = auto()
@@ -88,8 +88,8 @@ class Snake:
 
         elif self.state == SnakeState.Harmless:
             # When harmless snake reaches home, enter Confused briefly then resume patrol
-            if (self.home - self.pos).length() < 12:
-                self.confused_timer = 1.5  # seconds of confusion
+            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
+                self.confused_timer = settings.SNAKE_CONFUSED_DURATION
                 self.set_state(SnakeState.Confused)
 
         elif self.state == SnakeState.Confused:
@@ -105,46 +105,47 @@ class Snake:
             if d < min_obstacle_dist:
                 min_obstacle_dist = d
         
-        # Scale from 0.25 at >= 80px up to 0.65 at 0px
-        t = clamp((80.0 - min_obstacle_dist) / 80.0, 0.0, 1.0)
-        avoid_weight = 0.25 + 0.40 * t
+        # Scale avoid_weight from min (far from obstacle) up to max (right next to one)
+        t = clamp((settings.SNAKE_AVOID_NEAR_DIST - min_obstacle_dist) / settings.SNAKE_AVOID_NEAR_DIST, 0.0, 1.0)
+        avoid_weight = settings.SNAKE_AVOID_WEIGHT_MIN + (settings.SNAKE_AVOID_WEIGHT_MAX - settings.SNAKE_AVOID_WEIGHT_MIN) * t
 
         if self.state == SnakeState.Aggro:
             self.color = (255, 150, 150)
-            steer = pursue(self.pos, self.vel, frog.pos, frog.vel, self.speed)
-            # Light avoidance to reduce obstacle collisions while aggro
-            avoid_force, self._avoid_angle = seek_with_avoid(
-                self.pos, self.vel, frog.pos, self.speed, self.radius, self.rects,
+            # Predict where the frog will be, then let the corridor search pick the actual
+            # direction toward that point — avoidance has full authority when something is
+            # in the way, instead of being a weak add-on to a separately-computed chase force
+            predicted = predict_future_position(self.pos, frog.pos, frog.vel, self.speed)
+            steer, self._avoid_angle = seek_with_avoid(
+                self.pos, self.vel, predicted, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            steer += avoid_force * avoid_weight
 
         elif self.state == SnakeState.PatrolAway:
             self.color = (180, 200, 255)
             steer = arrive(self.pos, self.vel, self.patrol_point, self.speed)
-            if (self.patrol_point - self.pos).length() < 10:
+            if (self.patrol_point - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
                 self.set_state(SnakeState.PatrolHome)
             avoid_force, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, self.patrol_point, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            steer += avoid_force * avoid_weight
+            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
 
         elif self.state == SnakeState.PatrolHome:
             self.color = (180, 220, 180)
             steer = arrive(self.pos, self.vel, self.home, self.speed)
-            if (self.home - self.pos).length() < 10:
+            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
                 self.set_state(SnakeState.PatrolAway)
             avoid_force, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            steer += avoid_force * avoid_weight
+            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
 
         elif self.state == SnakeState.Harmless:
             self.color = (190, 180, 255)
-            steer = arrive(self.pos, self.vel, self.home, self.speed * 0.9)
+            steer = arrive(self.pos, self.vel, self.home, self.speed * settings.SNAKE_HARMLESS_SPEED_MULT)
             avoid_force, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            steer += avoid_force * avoid_weight
+            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
 
         else:  # Confused
             self.color = (245, 210, 160)
@@ -153,6 +154,21 @@ class Snake:
         # Integrate velocity and update position
         self.vel = integrate_velocity(self.vel, steer, dt, self.speed)
         self.pos += self.vel * dt
+
+        # Hard fallback: guarantee the snake never ends up overlapping an obstacle, even on
+        # frames where the soft avoidance steering wasn't enough (tight corners, high speed)
+        for rect in self.rects:
+            if circle_rect_intersect(self.pos, self.radius, rect):
+                nearest = nearest_point_on_rect(self.pos, rect)
+                diff = self.pos - nearest
+                if diff.length_squared() > 0:
+                    push_dir = diff.normalize()
+                else:
+                    push_dir = V2(0, -1)
+                self.pos = nearest + push_dir * self.radius
+                into_wall = self.vel.dot(push_dir)
+                if into_wall < 0:
+                    self.vel -= push_dir * into_wall
 
         # Smooth eye heading based on velocity
         spd = self.vel.length()

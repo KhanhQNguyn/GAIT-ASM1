@@ -25,7 +25,7 @@ class Particle:
     def __init__(self, pos, color):
         self.pos = V2(pos)
         self.vel = V2(random.uniform(-1, 1), random.uniform(-1, 1)).normalize() * random.uniform(50, 150)
-        self.lifetime = 0.3
+        self.lifetime = PARTICLE_LIFETIME
         self.age = 0.0
         self.color = color
 
@@ -64,6 +64,31 @@ class Slider:
         pygame.draw.rect(surf, (200, 200, 200), (self.rect.x, self.rect.y, rel_w, self.rect.height))
         txt = font.render(f"{self.label}: {self.val:.1f}", True, (255, 255, 255))
         surf.blit(txt, (self.rect.x + self.rect.width + 10, self.rect.y))
+
+def resolve_fly_overlaps(flies, iterations=2):
+    """
+    Hard position-based separation: guarantees no two flies end up visually
+    overlapping, regardless of how the steering forces balance out. Runs after
+    all flies have moved for the frame. Cheap: O(n^2) with n=30 is trivial.
+    """
+    for _ in range(iterations):
+        for i in range(len(flies)):
+            a = flies[i]
+            for j in range(i + 1, len(flies)):
+                b = flies[j]
+                diff = a.pos - b.pos
+                dist = diff.length()
+                min_dist = a.radius + b.radius
+                if dist == 0:
+                    # Perfectly stacked (rare) — nudge apart along a fixed axis
+                    push = V2(1, 0) * (min_dist * 0.5)
+                    a.pos += push
+                    b.pos -= push
+                elif dist < min_dist:
+                    overlap = min_dist - dist
+                    push = diff.normalize() * (overlap * 0.5)
+                    a.pos += push
+                    b.pos -= push
 
 def main():
     # Initialize Pygame and create a window and a clock
@@ -203,9 +228,18 @@ def main():
             # Update frog first since other agents may query frog position
             frog.update(dt)
 
+            # Precompute neighbor counts for catch-up detection
+            neighbor_counts = {}
+            for f in flies:
+                cnt = sum(
+                    1 for g in flies
+                    if g is not f and (g.pos - f.pos).length_squared() <= NEIGHBOR_RADIUS ** 2
+                )
+                neighbor_counts[id(f)] = cnt
+
             # Update flies and check if any fly gets caught by the frog
             for f in list(flies):
-                f.update(dt, flies, frog, world.rect, frog.bubbles)
+                f.update(dt, flies, frog, world.rect, frog.bubbles, neighbor_counts)
 
                 # Eat a fly when close enough to the frog center
                 if (f.pos - frog.pos).length_squared() <= (f.radius + FROG_RADIUS) ** 2:
@@ -216,6 +250,9 @@ def main():
                     if fly_count >= FLIES_TO_WIN:
                         game_over = True
                         win = True
+
+            # Hard positional correction — guarantee no two flies visually overlap
+            resolve_fly_overlaps(flies)
 
             # Update snakes and their FSM decisions
             for s in snakes:
@@ -236,7 +273,7 @@ def main():
                 if s.state == SnakeState.Aggro and (s.pos - frog.pos).length_squared() <= (s.radius + FROG_RADIUS) ** 2:
                     if frog.can_be_hurt():
                         health -= 1
-                        red_flash_timer = 0.15
+                        red_flash_timer = HURT_FLASH_DURATION
                         frog.start_hurt()
                         s.set_state(SnakeState.Harmless)
                         if health <= 0:
@@ -285,7 +322,7 @@ def main():
         # Draw Red Flash
         if red_flash_timer > 0:
             flash_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            alpha = min(255, max(0, int(255 * (red_flash_timer / 0.15))))
+            alpha = min(255, max(0, int(255 * (red_flash_timer / HURT_FLASH_DURATION))))
             pygame.draw.rect(flash_surf, (255, 0, 0, alpha), flash_surf.get_rect(), width=10)
             screen.blit(flash_surf, (0, 0))
 
