@@ -16,7 +16,7 @@ from settings import (
     WIDTH, HEIGHT, WHITE, GREEN, BLUE,
     FROG_RADIUS, FROG_SPEED,
     BUBBLE_RADIUS, BUBBLE_SPEED, BUBBLE_LIFETIME,
-    HURT_INVULN,
+    HURT_INVULN, FROG_FACING_MIN_SPEED_SQ,
     ARRIVE_STOP_RADIUS, ARRIVE_STOP_DAMPING, ARRIVE_STOP_SNAP
 )
 from utils import clamp, draw_debug_overlay, circle_rect_intersect, nearest_point_on_rect
@@ -63,7 +63,7 @@ class Frog:
 
     def shoot(self):
         """Spawn a bubble just in front of the frog, moving along the facing direction."""
-        dir_vec = self.vel if self.vel.length_squared() > 1 else self.facing
+        dir_vec = self.vel if self.vel.length_squared() > FROG_FACING_MIN_SPEED_SQ else self.facing
         origin = self.pos + dir_vec.normalize() * (self.radius + 6)
         self.bubbles.append(Bubble(origin, dir_vec))
 
@@ -95,7 +95,7 @@ class Frog:
         self.pos += self.vel * dt
 
         # Face in the direction of motion when moving
-        if self.vel.length_squared() > 16:
+        if self.vel.length_squared() > FROG_FACING_MIN_SPEED_SQ:
             self.facing = self.vel.normalize()
 
         # Keep inside bounds

@@ -27,7 +27,7 @@ MUTED = (180, 188, 196)  # hint text
 FROG_RADIUS = 16          # draw size and collision size for the frog
 FROG_SPEED  = 300.0       # top speed for the frog in pixels per second
 HURT_INVULN = 3.0         # seconds of temporary invulnerability after damage
-
+FROG_FACING_MIN_SPEED_SQ = 16.0 # speed for facing shotting
 # Bubble setup
 BUBBLE_RADIUS   = 8       # visual radius and collision radius
 BUBBLE_SPEED    = 380.0   # how fast the bubble travels
@@ -69,7 +69,8 @@ CATCHUP_GROUP_DELTA  = 3     # how many more neighbors the other group needs to 
 CATCHUP_SPEED_MULT   = 1.6   # speed multiplier while hurrying to join a bigger group
 CATCHUP_WEIGHT       = 1.4   # steering weight while catching up
 CATCHUP_MAX_OWN_GROUP = 2    # only consider catch-up if my own group is this small or smaller
-
+COH_DEAD_ZONE_RADIUS  = 6.0  # boids cohesion: no pull if within this distance of flock center
+COH_SLOW_ZONE_RADIUS  = 30.0 # boids cohesion: full-strength pull begins beyond this distance
 
 # Arrive behavior
 # Slow inside slow radius and stop inside stop radius
@@ -79,9 +80,9 @@ ARRIVE_STOP_DAMPING = 14.0   # 1/seconds — higher = faster hard stop once insi
 ARRIVE_STOP_SNAP    = 2.0    # px/s — below this speed, snap directly to zero
 
 # Snake setup
-NUM_SNAKES  = 3
+NUM_SNAKES  = 0
 SNAKE_RADIUS = 18
-SNAKE_SPEED  = 80.0
+SNAKE_SPEED  = 160.0
 
 # Snake perception ranges for FSM transitions
 AGGRO_RANGE   = 260.0     # start chasing when frog gets this close
@@ -99,6 +100,8 @@ SNAKE_AVOID_NEAR_DIST     = 80.0  # obstacle distance at which avoid_weight reac
 AVOID_LOOKAHEAD       = 260.0   # how far the snake looks ahead when checking a corridor
 AVOID_ANGLE_INCREMENT = 12      # degrees to rotate per step when searching for a free path
 AVOID_MAX_ANGLE       = 160     # maximum deviation to try on either side
+AVOID_MAX_ANGLE       = 160     # maximum deviation to try on either side
+SNAKE_AVOID_RETREAT_RADIUS_MULT = 3.0  # if nearest obstacle is closer than radius * this, retreat instead of creeping forward
 
 # Game rules
 START_HEALTH = 10                 # how many hits the frog can take

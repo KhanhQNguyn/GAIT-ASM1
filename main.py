@@ -24,7 +24,9 @@ from pygame.math import Vector2 as V2
 class Particle:
     def __init__(self, pos, color):
         self.pos = V2(pos)
-        self.vel = V2(random.uniform(-1, 1), random.uniform(-1, 1)).normalize() * random.uniform(50, 150)
+        raw_dir = V2(random.uniform(-1, 1), random.uniform(-1, 1))
+        direction = raw_dir.normalize() if raw_dir.length_squared() > 0 else V2(1, 0)
+        self.vel = direction * random.uniform(50, 150)
         self.lifetime = PARTICLE_LIFETIME
         self.age = 0.0
         self.color = color
@@ -35,7 +37,7 @@ class Particle:
 
     def draw(self, surf):
         if self.age < self.lifetime:
-            radius = max(1, int(4 * (1 - self.age / self.lifetime)))
+            radius = max(1, int(5 * (1 - self.age / self.lifetime)))
             pygame.draw.circle(surf, self.color, self.pos, radius)
 
 class Slider:
@@ -150,6 +152,8 @@ def main():
         Slider(20, 190, 100, 20, 50.0, 500.0, settings.AGGRO_RANGE, "AGGRO_RANGE"),
     ]
 
+    DEFAULT_SLIDER_VALS = [sl.val for sl in sliders]
+
     particles = []
     red_flash_timer = 0.0
     avg_close_speed = 0.0
@@ -204,6 +208,12 @@ def main():
                     fly_count = 0
                     game_over = False
                     win = False
+                    for sl, default_val in zip(sliders, DEFAULT_SLIDER_VALS):
+                        sl.val = default_val
+                    settings.SEP_WEIGHT = DEFAULT_SLIDER_VALS[0]
+                    settings.COH_WEIGHT = DEFAULT_SLIDER_VALS[1]
+                    settings.ALI_WEIGHT = DEFAULT_SLIDER_VALS[2]
+                    settings.AGGRO_RANGE = DEFAULT_SLIDER_VALS[3]
 
             if not game_over and e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
                 # Left click sets a new move target for the frog
@@ -229,17 +239,36 @@ def main():
             frog.update(dt)
 
             # Precompute neighbor counts for catch-up detection
-            neighbor_counts = {}
+# Precompute each fly's neighbor list (positions+velocities) and neighbor-id
+            # set ONCE per frame, in a single O(N^2) pass. This replaces the previous
+            # separate neighbor-counting pass plus the redundant per-fly neighbor rebuilds
+            # that used to happen again inside Fly.update()'s Flock branch, Fleeing branch,
+            # and has_nearby_flockmate check. Note: like the old neighbor_counts pass, this
+            # snapshot is taken before any fly moves this frame, so behavior (which flies
+            # count as neighbors of which) is unchanged from before — just computed once.
+            fly_neighbors = {}
+            fly_neighbor_ids = {}
             for f in flies:
-                cnt = sum(
-                    1 for g in flies
-                    if g is not f and (g.pos - f.pos).length_squared() <= NEIGHBOR_RADIUS ** 2
-                )
-                neighbor_counts[id(f)] = cnt
+                f_neighbors = []
+                f_neighbor_ids = set()
+                for g in flies:
+                    if g is f:
+                        continue
+                    if (g.pos - f.pos).length_squared() <= NEIGHBOR_RADIUS ** 2:
+                        f_neighbors.append((g.pos, g.vel))
+                        f_neighbor_ids.add(id(g))
+                fly_neighbors[id(f)] = f_neighbors
+                fly_neighbor_ids[id(f)] = f_neighbor_ids
+            neighbor_counts = {fid: len(nbrs) for fid, nbrs in fly_neighbors.items()}
 
             # Update flies and check if any fly gets caught by the frog
             for f in list(flies):
-                f.update(dt, flies, frog, world.rect, frog.bubbles, neighbor_counts)
+                f.update(
+                    dt, flies, frog, world.rect, frog.bubbles,
+                    neighbor_counts=neighbor_counts,
+                    neighbors=fly_neighbors.get(id(f), []),
+                    neighbor_ids=fly_neighbor_ids.get(id(f), set()),
+                )
 
                 # Eat a fly when close enough to the frog center
                 if (f.pos - frog.pos).length_squared() <= (f.radius + FROG_RADIUS) ** 2:
@@ -267,6 +296,13 @@ def main():
                             for _ in range(8):
                                 particles.append(Particle(s.pos, (200, 200, 255)))
                             s.set_state(SnakeState.Harmless)
+
+            # Bubbles also pop early if they hit an obstacle rect (optional per brief)
+            for b in frog.bubbles:
+                for rect in world.obstacles:
+                    if rect.collidepoint(b.pos):
+                        b.alive = False
+                        break
 
             # ------------- Damage logic -------------
             for s in snakes:

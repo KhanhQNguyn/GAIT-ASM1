@@ -63,7 +63,7 @@ class Fly:
             debug_state.log_transition("Fly", id(self) % 1000, self.state.name, new_state.name)
         self.state = new_state
 
-    def update(self, dt, flies, frog, bounds_rect, bubbles, neighbor_counts=None):
+    def update(self, dt, flies, frog, bounds_rect, bubbles, neighbor_counts=None, neighbors=None, neighbor_ids=None):
         """
         Update FSM and behavior. Flies use perception to switch states.
         Parameters
@@ -85,10 +85,7 @@ class Fly:
         scared_by_bubble = self.sense_bubbles_close(bubbles, BubbleFleeRange)
 
         # Cheap neighbor-presence check: true if any other fly is within NEIGHBOR_RADIUS
-        has_nearby_flockmate = any(
-            (f.pos - self.pos).length_squared() <= NEIGHBOR_RADIUS ** 2
-            for f in flies if f is not self
-        )
+        has_nearby_flockmate = bool(neighbors)
 
         # ---------------- FSM transitions ----------------
         if self.state == FlyState.Flock:
@@ -139,15 +136,11 @@ class Fly:
 
         # ---------------- State behaviours ----------------
         if self.state == FlyState.Flock:
-            # Build neighbor list for boids; also track neighbor fly IDs for catch-up exclusion
-            neighbors = []
-            neighbor_ids = set()
-            for f in flies:
-                if f is self:
-                    continue
-                if (f.pos - self.pos).length_squared() <= NEIGHBOR_RADIUS ** 2:
-                    neighbors.append((f.pos, f.vel))
-                    neighbor_ids.add(id(f))
+            # Neighbor list and neighbor-id set are precomputed once per frame in main.py
+            # (single O(N^2) pass shared by every fly) and passed in here — no need to
+            # rebuild them per-fly anymore.
+            neighbors = neighbors if neighbors is not None else []
+            neighbor_ids = neighbor_ids if neighbor_ids is not None else set()
             self._debug_neighbors = neighbors   # cache for debug drawing
 
             self._catching_up = False  # will be set True only if we decide to catch up below
@@ -214,13 +207,10 @@ class Fly:
             panic_mult = 1.0 + (settings.FLEE_PANIC_MAX_MULT - 1.0) * (closeness ** settings.FLEE_PANIC_EXPONENT)
             force *= panic_mult
 
-            # Mild separation so panicking flies scatter apart instead of overlapping each other
-            neighbors = []
-            for f in flies:
-                if f is self:
-                    continue
-                if (f.pos - self.pos).length_squared() <= NEIGHBOR_RADIUS ** 2:
-                    neighbors.append((f.pos, f.vel))
+            # Mild separation so panicking flies scatter apart instead of overlapping each
+            # other — reuse the neighbor list precomputed once per frame in main.py instead
+            # of rebuilding it here.
+            neighbors = neighbors if neighbors is not None else []
             self._debug_neighbors = neighbors
             if neighbors:
                 sep = boids_separation(self.pos, neighbors, sep_radius=settings.SEP_RADIUS)
@@ -238,7 +228,12 @@ class Fly:
             self.vel *= 0.98  # mild damping so idle feels soft
 
         # Speed clamp and position integrate — allow a temporary higher cap while catching up
-        effective_max_speed = FLY_SPEED * settings.CATCHUP_SPEED_MULT if self._catching_up else FLY_SPEED
+        if self.state == FlyState.Fleeing:
+            effective_max_speed = FLY_SPEED * settings.FLEE_PANIC_MAX_MULT
+        elif self._catching_up:
+            effective_max_speed = FLY_SPEED * settings.CATCHUP_SPEED_MULT
+        else:
+            effective_max_speed = FLY_SPEED
         if self.vel.length() > effective_max_speed:
             self.vel.scale_to_length(effective_max_speed)
         self.pos += self.vel * dt

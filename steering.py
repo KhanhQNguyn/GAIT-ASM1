@@ -14,7 +14,8 @@ from utils import limit, circlecast_hits_any_rect, nearest_point_on_rect
 from settings import (
     ARRIVE_SLOW_RADIUS, ARRIVE_STOP_RADIUS,
     AVOID_LOOKAHEAD, AVOID_ANGLE_INCREMENT, AVOID_MAX_ANGLE,
-    ALI_STRENGTH
+    ALI_STRENGTH, COH_DEAD_ZONE_RADIUS, COH_SLOW_ZONE_RADIUS,
+    SNAKE_AVOID_RETREAT_RADIUS_MULT
 )
 
 # ---------------- Base behaviours ----------------
@@ -101,7 +102,7 @@ def boids_separation(me_pos, neighbors, sep_radius):
             return limit(steering, 2.5)
     return V2()
 
-def boids_cohesion(me_pos, neighbors, dead_zone_radius=6.0, slow_zone_radius=30.0):
+def boids_cohesion(me_pos, neighbors, dead_zone_radius=COH_DEAD_ZONE_RADIUS, slow_zone_radius=COH_SLOW_ZONE_RADIUS):
     """
     Pull toward the average position of neighbors.
     This mirrors arrive()'s slow/stop-radius idea, applied to a flocking force instead of a single target.
@@ -201,7 +202,7 @@ def seek_with_avoid(pos, vel, target, max_speed, radius, rects, preferred_angle=
             nearest_dist = d
             nearest_obstacle_point = np
 
-    if nearest_obstacle_point is not None and nearest_dist < radius * 3:
+    if nearest_obstacle_point is not None and nearest_dist < radius * SNAKE_AVOID_RETREAT_RADIUS_MULT:
         away = pos - nearest_obstacle_point
         retreat_dir = away.normalize() if away.length_squared() > 0 else -base_dir
         desired = retreat_dir * max_speed * 0.6

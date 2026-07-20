@@ -140,7 +140,7 @@ from settings import (
     WIDTH, HEIGHT, WHITE, GREEN, BLUE,
     FROG_RADIUS, FROG_SPEED,
     BUBBLE_RADIUS, BUBBLE_SPEED, BUBBLE_LIFETIME,
-    HURT_INVULN,
+    HURT_INVULN, FROG_FACING_MIN_SPEED_SQ,
     ARRIVE_STOP_RADIUS, ARRIVE_STOP_DAMPING, ARRIVE_STOP_SNAP
 )
 from utils import clamp, draw_debug_overlay, circle_rect_intersect, nearest_point_on_rect
@@ -187,7 +187,7 @@ class Frog:
 
     def shoot(self):
         """Spawn a bubble just in front of the frog, moving along the facing direction."""
-        dir_vec = self.vel if self.vel.length_squared() > 1 else self.facing
+        dir_vec = self.vel if self.vel.length_squared() > FROG_FACING_MIN_SPEED_SQ else self.facing
         origin = self.pos + dir_vec.normalize() * (self.radius + 6)
         self.bubbles.append(Bubble(origin, dir_vec))
 
@@ -219,7 +219,7 @@ class Frog:
         self.pos += self.vel * dt
 
         # Face in the direction of motion when moving
-        if self.vel.length_squared() > 16:
+        if self.vel.length_squared() > FROG_FACING_MIN_SPEED_SQ:
             self.facing = self.vel.normalize()
 
         # Keep inside bounds
@@ -473,7 +473,7 @@ class Fly:
             debug_state.log_transition("Fly", id(self) % 1000, self.state.name, new_state.name)
         self.state = new_state
 
-    def update(self, dt, flies, frog, bounds_rect, bubbles, neighbor_counts=None):
+    def update(self, dt, flies, frog, bounds_rect, bubbles, neighbor_counts=None, neighbors=None, neighbor_ids=None):
         """
         Update FSM and behavior. Flies use perception to switch states.
         Parameters
@@ -495,10 +495,7 @@ class Fly:
         scared_by_bubble = self.sense_bubbles_close(bubbles, BubbleFleeRange)
 
         # Cheap neighbor-presence check: true if any other fly is within NEIGHBOR_RADIUS
-        has_nearby_flockmate = any(
-            (f.pos - self.pos).length_squared() <= NEIGHBOR_RADIUS ** 2
-            for f in flies if f is not self
-        )
+        has_nearby_flockmate = bool(neighbors)
 
         # ---------------- FSM transitions ----------------
         if self.state == FlyState.Flock:
@@ -549,15 +546,11 @@ class Fly:
 
         # ---------------- State behaviours ----------------
         if self.state == FlyState.Flock:
-            # Build neighbor list for boids; also track neighbor fly IDs for catch-up exclusion
-            neighbors = []
-            neighbor_ids = set()
-            for f in flies:
-                if f is self:
-                    continue
-                if (f.pos - self.pos).length_squared() <= NEIGHBOR_RADIUS ** 2:
-                    neighbors.append((f.pos, f.vel))
-                    neighbor_ids.add(id(f))
+            # Neighbor list and neighbor-id set are precomputed once per frame in main.py
+            # (single O(N^2) pass shared by every fly) and passed in here — no need to
+            # rebuild them per-fly anymore.
+            neighbors = neighbors if neighbors is not None else []
+            neighbor_ids = neighbor_ids if neighbor_ids is not None else set()
             self._debug_neighbors = neighbors   # cache for debug drawing
 
             self._catching_up = False  # will be set True only if we decide to catch up below
@@ -624,13 +617,10 @@ class Fly:
             panic_mult = 1.0 + (settings.FLEE_PANIC_MAX_MULT - 1.0) * (closeness ** settings.FLEE_PANIC_EXPONENT)
             force *= panic_mult
 
-            # Mild separation so panicking flies scatter apart instead of overlapping each other
-            neighbors = []
-            for f in flies:
-                if f is self:
-                    continue
-                if (f.pos - self.pos).length_squared() <= NEIGHBOR_RADIUS ** 2:
-                    neighbors.append((f.pos, f.vel))
+            # Mild separation so panicking flies scatter apart instead of overlapping each
+            # other — reuse the neighbor list precomputed once per frame in main.py instead
+            # of rebuilding it here.
+            neighbors = neighbors if neighbors is not None else []
             self._debug_neighbors = neighbors
             if neighbors:
                 sep = boids_separation(self.pos, neighbors, sep_radius=settings.SEP_RADIUS)
@@ -648,7 +638,12 @@ class Fly:
             self.vel *= 0.98  # mild damping so idle feels soft
 
         # Speed clamp and position integrate — allow a temporary higher cap while catching up
-        effective_max_speed = FLY_SPEED * settings.CATCHUP_SPEED_MULT if self._catching_up else FLY_SPEED
+        if self.state == FlyState.Fleeing:
+            effective_max_speed = FLY_SPEED * settings.FLEE_PANIC_MAX_MULT
+        elif self._catching_up:
+            effective_max_speed = FLY_SPEED * settings.CATCHUP_SPEED_MULT
+        else:
+            effective_max_speed = FLY_SPEED
         if self.vel.length() > effective_max_speed:
             self.vel.scale_to_length(effective_max_speed)
         self.pos += self.vel * dt
@@ -910,7 +905,7 @@ MUTED = (180, 188, 196)  # hint text
 FROG_RADIUS = 16          # draw size and collision size for the frog
 FROG_SPEED  = 300.0       # top speed for the frog in pixels per second
 HURT_INVULN = 3.0         # seconds of temporary invulnerability after damage
-
+FROG_FACING_MIN_SPEED_SQ = 16.0 # speed for facing shotting
 # Bubble setup
 BUBBLE_RADIUS   = 8       # visual radius and collision radius
 BUBBLE_SPEED    = 380.0   # how fast the bubble travels
@@ -952,7 +947,8 @@ CATCHUP_GROUP_DELTA  = 3     # how many more neighbors the other group needs to 
 CATCHUP_SPEED_MULT   = 1.6   # speed multiplier while hurrying to join a bigger group
 CATCHUP_WEIGHT       = 1.4   # steering weight while catching up
 CATCHUP_MAX_OWN_GROUP = 2    # only consider catch-up if my own group is this small or smaller
-
+COH_DEAD_ZONE_RADIUS  = 6.0  # boids cohesion: no pull if within this distance of flock center
+COH_SLOW_ZONE_RADIUS  = 30.0 # boids cohesion: full-strength pull begins beyond this distance
 
 # Arrive behavior
 # Slow inside slow radius and stop inside stop radius
@@ -962,9 +958,9 @@ ARRIVE_STOP_DAMPING = 14.0   # 1/seconds — higher = faster hard stop once insi
 ARRIVE_STOP_SNAP    = 2.0    # px/s — below this speed, snap directly to zero
 
 # Snake setup
-NUM_SNAKES  = 3
+NUM_SNAKES  = 0
 SNAKE_RADIUS = 18
-SNAKE_SPEED  = 80.0
+SNAKE_SPEED  = 160.0
 
 # Snake perception ranges for FSM transitions
 AGGRO_RANGE   = 260.0     # start chasing when frog gets this close
@@ -982,6 +978,8 @@ SNAKE_AVOID_NEAR_DIST     = 80.0  # obstacle distance at which avoid_weight reac
 AVOID_LOOKAHEAD       = 260.0   # how far the snake looks ahead when checking a corridor
 AVOID_ANGLE_INCREMENT = 12      # degrees to rotate per step when searching for a free path
 AVOID_MAX_ANGLE       = 160     # maximum deviation to try on either side
+AVOID_MAX_ANGLE       = 160     # maximum deviation to try on either side
+SNAKE_AVOID_RETREAT_RADIUS_MULT = 3.0  # if nearest obstacle is closer than radius * this, retreat instead of creeping forward
 
 # Game rules
 START_HEALTH = 10                 # how many hits the frog can take
@@ -1019,7 +1017,9 @@ from pygame.math import Vector2 as V2
 class Particle:
     def __init__(self, pos, color):
         self.pos = V2(pos)
-        self.vel = V2(random.uniform(-1, 1), random.uniform(-1, 1)).normalize() * random.uniform(50, 150)
+        raw_dir = V2(random.uniform(-1, 1), random.uniform(-1, 1))
+        direction = raw_dir.normalize() if raw_dir.length_squared() > 0 else V2(1, 0)
+        self.vel = direction * random.uniform(50, 150)
         self.lifetime = PARTICLE_LIFETIME
         self.age = 0.0
         self.color = color
@@ -1030,7 +1030,7 @@ class Particle:
 
     def draw(self, surf):
         if self.age < self.lifetime:
-            radius = max(1, int(4 * (1 - self.age / self.lifetime)))
+            radius = max(1, int(5 * (1 - self.age / self.lifetime)))
             pygame.draw.circle(surf, self.color, self.pos, radius)
 
 class Slider:
@@ -1145,6 +1145,8 @@ def main():
         Slider(20, 190, 100, 20, 50.0, 500.0, settings.AGGRO_RANGE, "AGGRO_RANGE"),
     ]
 
+    DEFAULT_SLIDER_VALS = [sl.val for sl in sliders]
+
     particles = []
     red_flash_timer = 0.0
     avg_close_speed = 0.0
@@ -1199,6 +1201,12 @@ def main():
                     fly_count = 0
                     game_over = False
                     win = False
+                    for sl, default_val in zip(sliders, DEFAULT_SLIDER_VALS):
+                        sl.val = default_val
+                    settings.SEP_WEIGHT = DEFAULT_SLIDER_VALS[0]
+                    settings.COH_WEIGHT = DEFAULT_SLIDER_VALS[1]
+                    settings.ALI_WEIGHT = DEFAULT_SLIDER_VALS[2]
+                    settings.AGGRO_RANGE = DEFAULT_SLIDER_VALS[3]
 
             if not game_over and e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
                 # Left click sets a new move target for the frog
@@ -1224,17 +1232,36 @@ def main():
             frog.update(dt)
 
             # Precompute neighbor counts for catch-up detection
-            neighbor_counts = {}
+# Precompute each fly's neighbor list (positions+velocities) and neighbor-id
+            # set ONCE per frame, in a single O(N^2) pass. This replaces the previous
+            # separate neighbor-counting pass plus the redundant per-fly neighbor rebuilds
+            # that used to happen again inside Fly.update()'s Flock branch, Fleeing branch,
+            # and has_nearby_flockmate check. Note: like the old neighbor_counts pass, this
+            # snapshot is taken before any fly moves this frame, so behavior (which flies
+            # count as neighbors of which) is unchanged from before — just computed once.
+            fly_neighbors = {}
+            fly_neighbor_ids = {}
             for f in flies:
-                cnt = sum(
-                    1 for g in flies
-                    if g is not f and (g.pos - f.pos).length_squared() <= NEIGHBOR_RADIUS ** 2
-                )
-                neighbor_counts[id(f)] = cnt
+                f_neighbors = []
+                f_neighbor_ids = set()
+                for g in flies:
+                    if g is f:
+                        continue
+                    if (g.pos - f.pos).length_squared() <= NEIGHBOR_RADIUS ** 2:
+                        f_neighbors.append((g.pos, g.vel))
+                        f_neighbor_ids.add(id(g))
+                fly_neighbors[id(f)] = f_neighbors
+                fly_neighbor_ids[id(f)] = f_neighbor_ids
+            neighbor_counts = {fid: len(nbrs) for fid, nbrs in fly_neighbors.items()}
 
             # Update flies and check if any fly gets caught by the frog
             for f in list(flies):
-                f.update(dt, flies, frog, world.rect, frog.bubbles, neighbor_counts)
+                f.update(
+                    dt, flies, frog, world.rect, frog.bubbles,
+                    neighbor_counts=neighbor_counts,
+                    neighbors=fly_neighbors.get(id(f), []),
+                    neighbor_ids=fly_neighbor_ids.get(id(f), set()),
+                )
 
                 # Eat a fly when close enough to the frog center
                 if (f.pos - frog.pos).length_squared() <= (f.radius + FROG_RADIUS) ** 2:
@@ -1262,6 +1289,13 @@ def main():
                             for _ in range(8):
                                 particles.append(Particle(s.pos, (200, 200, 255)))
                             s.set_state(SnakeState.Harmless)
+
+            # Bubbles also pop early if they hit an obstacle rect (optional per brief)
+            for b in frog.bubbles:
+                for rect in world.obstacles:
+                    if rect.collidepoint(b.pos):
+                        b.alive = False
+                        break
 
             # ------------- Damage logic -------------
             for s in snakes:
@@ -1467,7 +1501,8 @@ from utils import limit, circlecast_hits_any_rect, nearest_point_on_rect
 from settings import (
     ARRIVE_SLOW_RADIUS, ARRIVE_STOP_RADIUS,
     AVOID_LOOKAHEAD, AVOID_ANGLE_INCREMENT, AVOID_MAX_ANGLE,
-    ALI_STRENGTH
+    ALI_STRENGTH, COH_DEAD_ZONE_RADIUS, COH_SLOW_ZONE_RADIUS,
+    SNAKE_AVOID_RETREAT_RADIUS_MULT
 )
 
 # ---------------- Base behaviours ----------------
@@ -1554,7 +1589,7 @@ def boids_separation(me_pos, neighbors, sep_radius):
             return limit(steering, 2.5)
     return V2()
 
-def boids_cohesion(me_pos, neighbors, dead_zone_radius=6.0, slow_zone_radius=30.0):
+def boids_cohesion(me_pos, neighbors, dead_zone_radius=COH_DEAD_ZONE_RADIUS, slow_zone_radius=COH_SLOW_ZONE_RADIUS):
     """
     Pull toward the average position of neighbors.
     This mirrors arrive()'s slow/stop-radius idea, applied to a flocking force instead of a single target.
@@ -1654,7 +1689,7 @@ def seek_with_avoid(pos, vel, target, max_speed, radius, rects, preferred_angle=
             nearest_dist = d
             nearest_obstacle_point = np
 
-    if nearest_obstacle_point is not None and nearest_dist < radius * 3:
+    if nearest_obstacle_point is not None and nearest_dist < radius * SNAKE_AVOID_RETREAT_RADIUS_MULT:
         away = pos - nearest_obstacle_point
         retreat_dir = away.normalize() if away.length_squared() > 0 else -base_dir
         desired = retreat_dir * max_speed * 0.6
