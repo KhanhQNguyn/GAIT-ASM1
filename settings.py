@@ -80,7 +80,7 @@ ARRIVE_STOP_DAMPING = 14.0   # 1/seconds — higher = faster hard stop once insi
 ARRIVE_STOP_SNAP    = 2.0    # px/s — below this speed, snap directly to zero
 
 # Snake setup
-NUM_SNAKES  = 0
+NUM_SNAKES  = 3
 SNAKE_RADIUS = 18
 SNAKE_SPEED  = 160.0
 
