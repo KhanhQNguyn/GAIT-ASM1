@@ -104,8 +104,8 @@ AVOID_MAX_ANGLE       = 160     # maximum deviation to try on either side
 SNAKE_AVOID_RETREAT_RADIUS_MULT = 3.0  # if nearest obstacle is closer than radius * this, retreat instead of creeping forward
 
 # Game rules
-START_HEALTH = 10                 # how many hits the frog can take
-FLIES_TO_WIN = 20                # win condition counter
+START_HEALTH = 3                 # how many hits the frog can take
+FLIES_TO_WIN = 10                # win condition counter
 
 # Visual/effect timing
 PARTICLE_LIFETIME   = 2   # seconds a burst particle stays visible
