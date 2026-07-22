@@ -12,7 +12,7 @@ import math
 from pygame.math import Vector2 as V2
 from utils import limit, circlecast_hits_any_rect, nearest_point_on_rect
 from settings import (
-    ARRIVE_SLOW_RADIUS, ARRIVE_STOP_RADIUS,
+    ARRIVE_SLOW_RADIUS, ARRIVE_STOP_DAMPING, ARRIVE_STOP_RADIUS, ARRIVE_STOP_SNAP,
     AVOID_LOOKAHEAD, AVOID_ANGLE_INCREMENT, AVOID_MAX_ANGLE,
     ALI_STRENGTH, COH_DEAD_ZONE_RADIUS, COH_SLOW_ZONE_RADIUS,
     SNAKE_AVOID_RETREAT_RADIUS_MULT
@@ -66,6 +66,27 @@ def arrive(pos, vel, target, max_speed, slow_radius=ARRIVE_SLOW_RADIUS, stop_rad
         desired_vel = d.normalize() * max_speed
     
     return desired_vel - vel
+
+def apply_arrive_stop(
+    pos,
+    vel,
+    target,
+    dt,
+    stop_radius=ARRIVE_STOP_RADIUS,
+    damping=ARRIVE_STOP_DAMPING,
+    snap=ARRIVE_STOP_SNAP,
+):
+    """
+    Apply the final convergence after velocity integration.
+    """
+
+    if (target - pos).length() < stop_radius:
+        vel *= max(0.0, 1.0 - dt * damping)
+
+        if vel.length() < snap:
+            vel = V2()
+
+    return vel
 
 def integrate_velocity(vel, force, dt, max_speed):
     """
@@ -173,7 +194,7 @@ def seek_with_avoid(pos, vel, target, max_speed, radius, rects, preferred_angle=
         
     if preferred_angle != 0.0 and preferred_angle in angles_to_check:
         angles_to_check.remove(preferred_angle)
-        angles_to_check.insert(0, preferred_angle)
+        angles_to_check.insert(1, preferred_angle)  # right after 0, not before it
     
     for angle in angles_to_check:
         # Tạo hướng nhìn mới bằng cách xoay hướng gốc

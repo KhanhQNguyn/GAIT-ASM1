@@ -9,7 +9,7 @@
 #   Left click sets a target for the frog. Space shoots a bubble. R restarts.
 # ============================================================================
 
-from utils import draw_heart
+from utils import circle_rect_intersect, draw_heart
 import sys, random, math
 import pygame
 from settings import *
@@ -298,11 +298,13 @@ def main():
                             s.set_state(SnakeState.Harmless)
 
             # Bubbles also pop early if they hit an obstacle rect (optional per brief)
-            for b in frog.bubbles:
-                for rect in world.obstacles:
-                    if rect.collidepoint(b.pos):
-                        b.alive = False
-                        break
+                for b in frog.bubbles:
+                        for rect in world.obstacles:
+                            if circle_rect_intersect(b.pos, BUBBLE_RADIUS, rect):
+                                b.alive = False
+                                for _ in range(4):
+                                    particles.append(Particle(b.pos, (200, 200, 255)))
+                                break
 
             # ------------- Damage logic -------------
             for s in snakes:

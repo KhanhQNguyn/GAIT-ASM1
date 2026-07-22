@@ -21,7 +21,7 @@ from settings import (
 )
 from utils import clamp, draw_debug_overlay, circle_rect_intersect, nearest_point_on_rect
 import debug_state
-from steering import arrive, integrate_velocity
+from steering import arrive, integrate_velocity, apply_arrive_stop
 
 class Bubble:
     """
@@ -77,19 +77,26 @@ class Frog:
         return self.hurt_timer <= 0
 
     def update(self, dt):
-        # Compute steering with Arrive
-        steer = arrive(self.pos, self.vel, self.target, self.speed)
+        steer = arrive(
+            self.pos,
+            self.vel,
+            self.target,
+            self.speed,
+        )
 
-        # Integrate velocity with dt and clamp to max speed
-        self.vel = integrate_velocity(self.vel, steer, dt, self.speed)
+        self.vel = integrate_velocity(
+            self.vel,
+            steer,
+            dt,
+            self.speed,
+        )
 
-        # Hard-stop damping when inside stop radius — converges fully rather than creeping
-        dist_to_target = (self.target - self.pos).length()
-        if dist_to_target < ARRIVE_STOP_RADIUS:
-            damping = max(0.0, 1.0 - dt * ARRIVE_STOP_DAMPING)
-            self.vel *= damping
-            if self.vel.length() < ARRIVE_STOP_SNAP:
-                self.vel = V2(0, 0)
+        self.vel = apply_arrive_stop(
+            self.pos,
+            self.vel,
+            self.target,
+            dt,
+        )
 
         # Move the frog
         self.pos += self.vel * dt
