@@ -155,7 +155,7 @@ class Frog:
         
         # Debug overlay when enabled
         if debug_state.DEBUG:
-            draw_debug_overlay(surf, self.pos, self.vel, [], "n/a")
+            draw_debug_overlay(surf, self.pos, self.vel, [], "n/a", vel_color=(120, 255, 160))
             
             # Draw crosshair at target
             pygame.draw.circle(surf, (200, 200, 200), self.target, 3)

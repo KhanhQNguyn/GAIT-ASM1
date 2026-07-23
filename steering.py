@@ -47,23 +47,33 @@ def arrive(pos, vel, target, max_speed, slow_radius=ARRIVE_SLOW_RADIUS, stop_rad
     """
     Like seek when far, but slow down near the target.
     Uses a smoothstep curve in the slow zone for natural ease-in/ease-out deceleration.
+    Also actively damps the sideways (tangential) velocity component while inside the
+    slow zone, so a fast approach from an angle settles in a straight line instead of
+    arcing/orbiting around the target.
     """
     d = target - pos
     dist = d.length()
-    
+
     if dist < stop_radius:
         return -vel  # Cancel velocity to stop
-    
+
+    direction = d.normalize()
+
     if dist < slow_radius:
-        # Smoothstep curve: t^2 * (3 - 2t)
         t = dist / slow_radius
         eased = t * t * (3.0 - 2.0 * t)
-        
         desired_speed = max_speed * eased
-        desired_vel = d.normalize() * desired_speed
+        desired_vel = direction * desired_speed
+
+        # Actively cancel the part of the current velocity that's sideways relative to
+        # the target direction - this is what actually prevents orbiting, rather than
+        # just giving the correction more distance to work with.
+        radial_speed = vel.dot(direction)
+        tangential = vel - direction * radial_speed
+        desired_vel -= tangential * (1.0 - t)  # damp harder the closer we get
     else:
-        desired_vel = d.normalize() * max_speed
-    
+        desired_vel = direction * max_speed
+
     return desired_vel - vel
 
 def apply_arrive_stop(
@@ -231,6 +241,41 @@ def seek_with_avoid(pos, vel, target, max_speed, radius, rects, preferred_angle=
         desired = base_dir * max_speed * 0.4
 
     return (desired - vel, 0.0)
+
+def arrive_with_avoid(pos, vel, target, max_speed, radius, rects, preferred_angle=0.0,
+                       slow_radius=ARRIVE_SLOW_RADIUS, stop_radius=ARRIVE_STOP_RADIUS):
+    """
+    Unified Arrive + obstacle avoidance for Patrol-style states.
+
+    Picks ONE direction — whatever seek_with_avoid() decides on — and applies Arrive's
+    slow/stop-radius speed taper to that single direction, instead of computing arrive()
+    and seek_with_avoid() as two independent forces and summing them (which can fight
+    each other near an obstacle and stall progress). Mirrors how Aggro already trusts
+    seek_with_avoid completely rather than blending against it.
+
+    Returns (force, angle) — same shape as seek_with_avoid, so callers can keep passing
+    the returned angle back in as preferred_angle next frame.
+    """
+    d = target - pos
+    dist = d.length()
+
+    if dist < stop_radius:
+        return -vel, preferred_angle
+
+    avoid_force, angle = seek_with_avoid(pos, vel, target, max_speed, radius, rects,
+                                          preferred_angle=preferred_angle)
+    desired_dir_vel = avoid_force + vel
+    direction = desired_dir_vel.normalize() if desired_dir_vel.length_squared() > 0 else d.normalize()
+
+    if dist < slow_radius:
+        t = dist / slow_radius
+        eased = t * t * (3.0 - 2.0 * t)
+        desired_speed = max_speed * eased
+    else:
+        desired_speed = max_speed
+
+    desired_vel = direction * desired_speed
+    return desired_vel - vel, angle
 
 # ---------------- New behaviours to be implemented ----------------
 

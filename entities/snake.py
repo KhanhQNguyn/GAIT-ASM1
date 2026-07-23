@@ -22,7 +22,7 @@ from settings import (
 )
 from utils import draw_debug_overlay, nearest_point_on_rect, clamp, circle_rect_intersect
 import debug_state
-from steering import arrive, seek, seek_with_avoid, integrate_velocity, pursue, wander_force, predict_future_position
+from steering import arrive, seek, seek_with_avoid, integrate_velocity, pursue, wander_force, predict_future_position, arrive_with_avoid
 
 class SnakeState(Enum):
     PatrolAway = auto()
@@ -106,16 +106,16 @@ class Snake:
                 self.set_state(SnakeState.PatrolAway)
 
         # ---------------- State behaviours ----------------
-        min_obstacle_dist = float('inf')
-        for r in self.rects:
-            np = nearest_point_on_rect(self.pos, r)
-            d = (self.pos - np).length()
-            if d < min_obstacle_dist:
-                min_obstacle_dist = d
+        # min_obstacle_dist = float('inf')
+        # for r in self.rects:
+        #     np = nearest_point_on_rect(self.pos, r)
+        #     d = (self.pos - np).length()
+        #     if d < min_obstacle_dist:
+        #         min_obstacle_dist = d
         
-        # Scale avoid_weight from min (far from obstacle) up to max (right next to one)
-        t = clamp((settings.SNAKE_AVOID_NEAR_DIST - min_obstacle_dist) / settings.SNAKE_AVOID_NEAR_DIST, 0.0, 1.0)
-        avoid_weight = settings.SNAKE_AVOID_WEIGHT_MIN + (settings.SNAKE_AVOID_WEIGHT_MAX - settings.SNAKE_AVOID_WEIGHT_MIN) * t
+        # # Scale avoid_weight from min (far from obstacle) up to max (right next to one)
+        # t = clamp((settings.SNAKE_AVOID_NEAR_DIST - min_obstacle_dist) / settings.SNAKE_AVOID_NEAR_DIST, 0.0, 1.0)
+        # avoid_weight = settings.SNAKE_AVOID_WEIGHT_MIN + (settings.SNAKE_AVOID_WEIGHT_MAX - settings.SNAKE_AVOID_WEIGHT_MIN) * t
 
         if self.state == SnakeState.Aggro:
             self.color = (255, 150, 150)
@@ -130,39 +130,33 @@ class Snake:
         elif self.state == SnakeState.PatrolAway:
             self.color = (180, 200, 255)
             self._debug_target = self.patrol_point
-            steer = arrive(self.pos, self.vel, self.patrol_point, self.speed)
-            self._debug_steer = steer
-            if (self.patrol_point - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
-                self.set_state(SnakeState.PatrolHome)
-            avoid_force, self._avoid_angle = seek_with_avoid(
+            steer, self._avoid_angle = arrive_with_avoid(
                 self.pos, self.vel, self.patrol_point, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            self._debug_avoid = avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
-            steer += self._debug_avoid
+            self._debug_steer = steer
+            self._debug_avoid = V2()
+            if (self.patrol_point - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
+                self.set_state(SnakeState.PatrolHome)
 
         elif self.state == SnakeState.PatrolHome:
             self.color = (180, 220, 180)
             self._debug_target = self.home
-            steer = arrive(self.pos, self.vel, self.home, self.speed)
-            self._debug_steer = steer
-            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
-                self.set_state(SnakeState.PatrolAway)
-            avoid_force, self._avoid_angle = seek_with_avoid(
+            steer, self._avoid_angle = arrive_with_avoid(
                 self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            self._debug_avoid = avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
-            steer += self._debug_avoid
+            self._debug_steer = steer
+            self._debug_avoid = V2()
+            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
+                self.set_state(SnakeState.PatrolAway)
 
         elif self.state == SnakeState.Harmless:
             self.color = (190, 180, 255)
             self._debug_target = self.home
-            steer = arrive(self.pos, self.vel, self.home, self.speed * settings.SNAKE_HARMLESS_SPEED_MULT)
+            steer, self._avoid_angle = arrive_with_avoid(
+                self.pos, self.vel, self.home, self.speed * settings.SNAKE_HARMLESS_SPEED_MULT,
+                self.radius, self.rects, preferred_angle=self._avoid_angle)
             self._debug_steer = steer
-            avoid_force, self._avoid_angle = seek_with_avoid(
-                self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
-                preferred_angle=self._avoid_angle)
-            self._debug_avoid = avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
-            steer += self._debug_avoid
+            self._debug_avoid = V2()
 
         else:  # Confused
             self.color = (245, 210, 160)
@@ -216,7 +210,7 @@ class Snake:
                 (settings.AGGRO_RANGE, (255, 100, 100)),
                 (DEAGGRO_RANGE, (100, 100, 255))
             ]
-            draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)
+            draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name, vel_color=(255, 130, 100))
             
             # Draw individual forces
             scale = 0.3

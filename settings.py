@@ -65,10 +65,12 @@ COH_WEIGHT      = 0.8     # weight for cohesion force
 ALI_WEIGHT      = 1.1     # weight for alignment force
 ALI_STRENGTH    = 1.5     # base scale for the alignment force before ALI_WEIGHT is applied
 ANCHOR_WEIGHT   = 0.6     # small pull to arena center to keep flock on screen
-CATCHUP_GROUP_DELTA  = 3     # how many more neighbors the other group needs to trigger catch-up
+CATCHUP_GROUP_DELTA  = 1     # how many more neighbors the other group needs to trigger catch-up
 CATCHUP_SPEED_MULT   = 1.6   # speed multiplier while hurrying to join a bigger group
 CATCHUP_WEIGHT       = 1.4   # steering weight while catching up
-CATCHUP_MAX_OWN_GROUP = 1    # only consider catch-up if my own group is this small or smaller
+CATCHUP_MIN_OWN_GROUP = 2     # only consider catch-up if my own group is this small or smaller 
+CATCHUP_MAX_OWN_GROUP = 4    # only consider catch-up if my own group is this small or smaller
+CATCHUP_SEARCH_RADIUS = 350.0 
 COH_DEAD_ZONE_RADIUS  = 6.0  # boids cohesion: no pull if within this distance of flock center
 COH_SLOW_ZONE_RADIUS  = 30.0 # boids cohesion: full-strength pull begins beyond this distance
 

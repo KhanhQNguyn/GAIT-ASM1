@@ -151,7 +151,12 @@ class Fly:
 
             # Only genuinely small/isolated groups should ever consider catching up —
             # density variation inside an already-joined flock should not re-trigger this
-            if neighbor_counts is not None and my_group_size <= settings.CATCHUP_MAX_OWN_GROUP:
+            # Only a genuinely small-but-real flock (not a lone straggler or a pair) should
+            # actively hurry toward a meaningfully bigger one nearby. A lone fly or pair just
+            # flocks normally and merges naturally whenever it happens to encounter a group —
+            # no active cross-map hunting for those.
+            if (neighbor_counts is not None
+                    and settings.CATCHUP_MIN_OWN_GROUP <= my_group_size <= settings.CATCHUP_MAX_OWN_GROUP):
                 for f in flies:
                     if f is self:
                         continue
@@ -159,7 +164,7 @@ class Fly:
                     if id(f) in neighbor_ids:
                         continue
                     d = (f.pos - self.pos).length()
-                    if d <= settings.REGROUP_RADIUS:
+                    if d <= settings.CATCHUP_SEARCH_RADIUS:
                         f_count = neighbor_counts.get(id(f), 0)
                         if f_count > best_bigger_size + settings.CATCHUP_GROUP_DELTA:
                             best_bigger_size = f_count
@@ -260,4 +265,4 @@ class Fly:
                 pygame.draw.line(surf, (60, 90, 110), self.pos, n_pos, 1)
             # Draw velocity vector, NEIGHBOR_RADIUS perception, and state name
             perception_radii = [(NEIGHBOR_RADIUS, (100, 200, 255))]
-            draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)
+            draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name, vel_color=(230, 220, 100))
