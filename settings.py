@@ -36,7 +36,7 @@ BUBBLE_LIFETIME = 2.0     # seconds before the bubble pops automatically
 # Fly setup
 FLY_CLUSTER_COUNT = 4        # number of initial flock clusters
 FLY_CLUSTER_SPAWN_RADIUS = 90.0  # max offset from a cluster center when spawning
-NUM_FLIES = 15           # how many flies spawn
+NUM_FLIES = 10           # how many flies spawn
 FLY_RADIUS = 8            # fly draw and collision radius
 FLY_SPEED  = 120.0        # fly max speed
 

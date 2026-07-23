@@ -13,7 +13,7 @@ from utils import circle_rect_intersect, draw_heart
 import sys, random, math
 import pygame
 from settings import *
-from utils import draw_grid, draw_debug_overlay
+from utils import draw_grid, draw_debug_overlay, nearest_point_on_rect
 from world import World
 from entities.frog import Frog
 from entities.fly import Fly
@@ -416,38 +416,38 @@ def main():
                 screen.blit(hud_txt, (20, 220))
 
             # Live FSM transition log — bottom-left corner, most recent at bottom
-            log_y_start = HEIGHT - 20 - len(debug_state.TRANSITION_LOG) * 22
-            for i, (ts, kind, idx, old_st, new_st) in enumerate(debug_state.TRANSITION_LOG):
-                entry = f"{ts} {kind}#{idx} {old_st} -> {new_st}"
-                log_surf = font.render(entry, True, (200, 230, 200))
-                screen.blit(log_surf, (16, log_y_start + i * 22))
+            # log_y_start = HEIGHT - 20 - len(debug_state.TRANSITION_LOG) * 22
+            # for i, (ts, kind, idx, old_st, new_st) in enumerate(debug_state.TRANSITION_LOG):
+            #     entry = f"{ts} {kind}#{idx} {old_st} -> {new_st}"
+            #     log_surf = font.render(entry, True, (200, 230, 200))
+            #     screen.blit(log_surf, (16, log_y_start + i * 22))
 
             # --- Stats panel (top-right corner) ---
-            fps_val   = clock.get_fps()
-            fly_flock   = sum(1 for f in flies if f.state == FlyState.Flock)
-            fly_flee    = sum(1 for f in flies if f.state == FlyState.Fleeing)
-            fly_idle    = sum(1 for f in flies if f.state == FlyState.Idle)
-            sn_counts   = {st: sum(1 for s in snakes if s.state == st) for st in _SnakeState}
-            stats_lines = [
-                f"FPS: {fps_val:.1f}",
-                f"Flies: Flock {fly_flock} | Fleeing {fly_flee} | Idle {fly_idle}",
-                f"Snakes: Patrol {sn_counts[_SnakeState.PatrolAway]+sn_counts[_SnakeState.PatrolHome]}"
-                f" | Aggro {sn_counts[_SnakeState.Aggro]}"
-                f" | Harmless {sn_counts[_SnakeState.Harmless]}"
-                f" | Confused {sn_counts[_SnakeState.Confused]}",
-                f"Bubbles: {len(frog.bubbles)}",
-                f"Particles: {len(particles)}",
-            ]
-            panel_w = 480
-            panel_h = len(stats_lines) * 22 + 10
-            panel_x = WIDTH - panel_w - 10
-            panel_y = 10
-            panel_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-            panel_surf.fill((0, 0, 0, 140))
-            screen.blit(panel_surf, (panel_x, panel_y))
-            for li, line in enumerate(stats_lines):
-                ls = font.render(line, True, (220, 220, 255))
-                screen.blit(ls, (panel_x + 6, panel_y + 5 + li * 22))
+            # fps_val   = clock.get_fps()
+            # fly_flock   = sum(1 for f in flies if f.state == FlyState.Flock)
+            # fly_flee    = sum(1 for f in flies if f.state == FlyState.Fleeing)
+            # fly_idle    = sum(1 for f in flies if f.state == FlyState.Idle)
+            # sn_counts   = {st: sum(1 for s in snakes if s.state == st) for st in _SnakeState}
+            # stats_lines = [
+            #     f"FPS: {fps_val:.1f}",
+            #     f"Flies: Flock {fly_flock} | Fleeing {fly_flee} | Idle {fly_idle}",
+            #     f"Snakes: Patrol {sn_counts[_SnakeState.PatrolAway]+sn_counts[_SnakeState.PatrolHome]}"
+            #     f" | Aggro {sn_counts[_SnakeState.Aggro]}"
+            #     f" | Harmless {sn_counts[_SnakeState.Harmless]}"
+            #     f" | Confused {sn_counts[_SnakeState.Confused]}",
+            #     f"Bubbles: {len(frog.bubbles)}",
+            #     f"Particles: {len(particles)}",
+            # # ]
+            # panel_w = 480
+            # panel_h = len(stats_lines) * 22 + 10
+            # panel_x = WIDTH - panel_w - 10
+            # panel_y = 10
+            # panel_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            # panel_surf.fill((0, 0, 0, 140))
+            # screen.blit(panel_surf, (panel_x, panel_y))
+            # for li, line in enumerate(stats_lines):
+            #     ls = font.render(line, True, (220, 220, 255))
+            #     screen.blit(ls, (panel_x + 6, panel_y + 5 + li * 22))
 
             # --- Click-to-inspect floating info box ---
             # Clear selection if the inspected fly was caught

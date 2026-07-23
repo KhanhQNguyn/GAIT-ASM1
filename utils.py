@@ -76,39 +76,42 @@ def circlecast_hits_any_rect(p0, p1, radius, rects, step=6.0):
             return True
     return False
 
-def draw_debug_overlay(surf, pos, vel, perception_radii, state_name=None):
+def draw_debug_overlay(surf, pos, vel, perception_radii, state_name=None, vel_color=(255, 100, 100)):
     """
     Draw debug overlay for an entity: velocity vector, perception radii, and state name.
-    
+
     Parameters:
       surf: pygame surface to draw on
       pos: entity position (V2)
       vel: entity velocity (V2)
       perception_radii: list of (radius_value, color) tuples to draw as circles
       state_name: string name of state to render, or None to skip state text
+      vel_color: color of the velocity arrow, so different entity types read distinctly
     """
-    # Draw velocity vector scaled by 0.3
+    # Draw velocity vector — bigger scale, thicker line, solid filled arrowhead
     if vel.length_squared() > 0.01:
-        vel_end = pos + vel * 0.3
-        pygame.draw.line(surf, (255, 100, 100), pos, vel_end, 2)
-        # Small arrow head
-        if vel.length() > 1:
-            arrow_dir = vel.normalize()
-            arrow_left = arrow_dir.rotate(150) * 6
-            arrow_right = arrow_dir.rotate(-150) * 6
-            pygame.draw.line(surf, (255, 100, 100), vel_end, vel_end + arrow_left, 1)
-            pygame.draw.line(surf, (255, 100, 100), vel_end, vel_end + arrow_right, 1)
-    
+        vel_end = pos + vel * 0.45
+        pygame.draw.line(surf, vel_color, pos, vel_end, 3)
+        arrow_dir = vel.normalize()
+        tip = vel_end + arrow_dir * 10
+        left = vel_end + arrow_dir.rotate(140) * 9
+        right = vel_end + arrow_dir.rotate(-140) * 9
+        pygame.draw.polygon(surf, vel_color, [tip, left, right])
+
     # Draw perception radius circles
     for radius, color in perception_radii:
         pygame.draw.circle(surf, color, pos, radius, 1)
-    
-    # Draw state name as small text above entity
+
+    # Draw state name as small text above entity, with a background for legibility
     if state_name is not None:
         from pygame.font import Font
-        tiny_font = Font(None, 18)
-        txt = tiny_font.render(state_name, True, (200, 200, 200))
+        tiny_font = Font(None, 22)
+        txt = tiny_font.render(state_name, True, (235, 235, 235))
         text_rect = txt.get_rect(midbottom=(int(pos.x), int(pos.y) - 20))
+        bg_rect = text_rect.inflate(6, 4)
+        bg_surf = pygame.Surface(bg_rect.size, pygame.SRCALPHA)
+        bg_surf.fill((0, 0, 0, 140))
+        surf.blit(bg_surf, bg_rect.topleft)
         surf.blit(txt, text_rect)
 
 def draw_heart(screen, x, y, color):
