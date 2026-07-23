@@ -109,9 +109,35 @@ def main():
         Returns a tuple of (world, frog, flies, snakes).
         """
         world = World(WIDTH, HEIGHT)
-        frog = Frog((WIDTH * 0.5, HEIGHT * 0.5), world.obstacles)
 
-        # Generate cluster centers
+        # Helper to push spawn/target points out of obstacles
+        def get_safe_point(x, y, radius):
+            p = V2(x, y)
+            for _ in range(5): # Iteratively push out of overlapping obstacles
+                hit = False
+                for rect in world.obstacles:
+                    if circle_rect_intersect(p, radius, rect):
+                        hit = True
+                        nearest = nearest_point_on_rect(p, rect)
+                        diff = p - nearest
+                        if diff.length_squared() > 0:
+                            p = nearest + diff.normalize() * (radius + 10)
+                        else:
+                            # Fallback push if perfectly centered
+                            p += V2(0, -1) * (radius + 10)
+                if not hit:
+                    break
+            
+            # Clamp the final point to ensure it wasn't pushed off-screen
+            p.x = max(radius, min(WIDTH - radius, p.x))
+            p.y = max(radius, min(HEIGHT - radius, p.y))
+            return p.x, p.y
+
+        # Spawn Frog safely
+        fx, fy = get_safe_point(WIDTH * 0.5, HEIGHT * 0.5, FROG_RADIUS)
+        frog = Frog((fx, fy), world.obstacles)
+
+        # Generate cluster centers for flies
         centers = []
         while len(centers) < FLY_CLUSTER_COUNT:
             cx = random.randint(60, WIDTH - 60)
@@ -125,19 +151,23 @@ def main():
             center = centers[i % FLY_CLUSTER_COUNT]
             radius = FLY_CLUSTER_SPAWN_RADIUS * math.sqrt(random.random())
             angle = random.uniform(0, 2 * math.pi)
-            fx = center.x + radius * math.cos(angle)
-            fy = center.y + radius * math.sin(angle)
-            fx = max(FLY_RADIUS + 4, min(WIDTH - (FLY_RADIUS + 4), fx))
-            fy = max(FLY_RADIUS + 4, min(HEIGHT - (FLY_RADIUS + 4), fy))
-            flies.append(Fly((fx, fy)))
+            fly_x = center.x + radius * math.cos(angle)
+            fly_y = center.y + radius * math.sin(angle)
+            fly_x = max(FLY_RADIUS + 4, min(WIDTH - (FLY_RADIUS + 4), fly_x))
+            fly_y = max(FLY_RADIUS + 4, min(HEIGHT - (FLY_RADIUS + 4), fly_y))
+            flies.append(Fly((fly_x, fly_y)))
 
-        # Create snakes with patrol points mirrored across the screen
+        # Create snakes with safely adjusted patrol and home points
         snakes = []
         for i in range(NUM_SNAKES):
             px = 140 + i * 320
             py = 120 if i % 2 == 0 else HEIGHT - 140
-            patrol = (WIDTH - px, HEIGHT - py)
-            snakes.append(Snake((px, py), patrol, world.obstacles))
+            
+            # Ensure both the spawn (home) point and the patrol point are safe
+            home_x, home_y = get_safe_point(px, py, SNAKE_RADIUS)
+            patrol_x, patrol_y = get_safe_point(WIDTH - px, HEIGHT - py, SNAKE_RADIUS)
+            
+            snakes.append(Snake((home_x, home_y), (patrol_x, patrol_y), world.obstacles))
 
         return world, frog, flies, snakes
 
@@ -295,7 +325,7 @@ def main():
                         if s.state == SnakeState.Aggro:
                             for _ in range(8):
                                 particles.append(Particle(s.pos, (200, 200, 255)))
-                            s.set_state(SnakeState.Harmless)
+                            s.set_state(SnakeState.Confused)
 
             # Bubbles also pop early if they hit an obstacle rect (optional per brief)
                 for b in frog.bubbles:
@@ -313,7 +343,7 @@ def main():
                         health -= 1
                         red_flash_timer = HURT_FLASH_DURATION
                         frog.start_hurt()
-                        s.set_state(SnakeState.Harmless)
+                        s.set_state(SnakeState.Confused)
                         if health <= 0:
                             game_over = True
                             win = False

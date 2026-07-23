@@ -46,12 +46,7 @@ def flee(pos, vel, target, max_speed):
 def arrive(pos, vel, target, max_speed, slow_radius=ARRIVE_SLOW_RADIUS, stop_radius=ARRIVE_STOP_RADIUS):
     """
     Like seek when far, but slow down near the target.
-    Returns a steering force following the desired_velocity - current_velocity pattern.
-    Rules:
-      If distance < stop_radius, return a force that cancels leftover velocity
-      If distance < slow_radius, scale desired speed by distance / slow_radius
-      Otherwise use full speed
-    This removes overshoot and jitter around the target.
+    Uses a smoothstep curve in the slow zone for natural ease-in/ease-out deceleration.
     """
     d = target - pos
     dist = d.length()
@@ -60,7 +55,11 @@ def arrive(pos, vel, target, max_speed, slow_radius=ARRIVE_SLOW_RADIUS, stop_rad
         return -vel  # Cancel velocity to stop
     
     if dist < slow_radius:
-        desired_speed = max_speed * (dist / slow_radius)
+        # Smoothstep curve: t^2 * (3 - 2t)
+        t = dist / slow_radius
+        eased = t * t * (3.0 - 2.0 * t)
+        
+        desired_speed = max_speed * eased
         desired_vel = d.normalize() * desired_speed
     else:
         desired_vel = d.normalize() * max_speed
@@ -101,13 +100,9 @@ def integrate_velocity(vel, force, dt, max_speed):
 
 # ---------------- Boids components ----------------
 
-def boids_separation(me_pos, neighbors, sep_radius):
+def boids_separation(me_pos, me_vel, neighbors, sep_radius, max_speed):
     """
     Push away from neighbors that are too close.
-    neighbors: list of tuples (neighbor_pos, neighbor_vel)
-    Typical approach
-      For each neighbor inside sep_radius, add a vector pointing away with
-      magnitude inversely proportional to distance. Normalize at the end.
     """
     steering = V2()
     count = 0
@@ -115,60 +110,64 @@ def boids_separation(me_pos, neighbors, sep_radius):
         d = me_pos - n_pos
         dist = d.length()
         if 0 < dist < sep_radius:
-            steering += d.normalize() / dist  # Inverse proportional to distance
+            # Scale the repulsion so closer neighbors push harder
+            steering += d.normalize() * (sep_radius / dist)
             count += 1
+            
     if count > 0:
         steering /= count
-        if steering.length() > 0:
-            return limit(steering, 2.5)
+        # Calculate standard steering force
+        steering = steering.normalize() * max_speed
+        return steering - me_vel
+        
     return V2()
 
-def boids_cohesion(me_pos, neighbors, dead_zone_radius=COH_DEAD_ZONE_RADIUS, slow_zone_radius=COH_SLOW_ZONE_RADIUS):
+def boids_cohesion(me_pos, me_vel, neighbors, max_speed, dead_zone_radius=COH_DEAD_ZONE_RADIUS, slow_zone_radius=COH_SLOW_ZONE_RADIUS):
     """
-    Pull toward the average position of neighbors.
-    This mirrors arrive()'s slow/stop-radius idea, applied to a flocking force instead of a single target.
-    Typical approach
-      Compute the center of mass of neighbors then steer toward that point.
+    Pull toward the center of mass of neighbors.
     """
     if not neighbors:
         return V2()
+        
     avg_pos = V2()
     for n_pos, n_vel in neighbors:
         avg_pos += n_pos
-        
     avg_pos /= len(neighbors)
 
-    dist = (avg_pos - me_pos).length()
-    if dist < dead_zone_radius:
-        return V2()
-    elif dist < slow_zone_radius:
-        direction = (avg_pos - me_pos).normalize()
-        return direction * (dist / slow_zone_radius)
-    else:
-        direction = (avg_pos - me_pos).normalize()
-        return direction
+    target_vec = avg_pos - me_pos
+    dist = target_vec.length()
 
-def boids_alignment(me_vel, neighbors):
+    # Cancel out velocity if perfectly centered
+    if dist < dead_zone_radius:
+        return -me_vel * 0.5 
+        
+    # Scale desired speed similar to Arrive behavior
+    if dist < slow_zone_radius:
+        desired_speed = max_speed * (dist / slow_zone_radius)
+    else:
+        desired_speed = max_speed
+        
+    desired_vel = target_vec.normalize() * desired_speed
+    return desired_vel - me_vel
+
+def boids_alignment(me_vel, neighbors, max_speed):
     """
     Match the average velocity of neighbors.
-    Typical approach
-    Compute the average heading of neighbors then steer toward that heading.
     """
     if not neighbors:
         return V2()
+        
     avg_vel = V2()
     for n_pos, n_vel in neighbors:
         avg_vel += n_vel
     avg_vel /= len(neighbors)
 
-    diff = avg_vel - me_vel
-    if diff.length_squared() == 0:
+    if avg_vel.length_squared() == 0:
         return V2()
-    # Scale relative to a reference speed difference (60 px/s) so the result sits in
-    # roughly the same magnitude range as separation/cohesion, instead of the old fixed
-    # 0.1 factor which made alignment converge too slowly to ever look parallel.
-    norm = min(diff.length() / 60.0, 1.0)
-    return diff.normalize() * norm * ALI_STRENGTH
+
+    # The average velocity direction is our desired direction
+    desired_vel = avg_vel.normalize() * max_speed
+    return desired_vel - me_vel
 
 # ---------------- Obstacle avoidance blend ----------------
 
@@ -258,12 +257,16 @@ def pursue(pos, vel, target_pos, target_vel, max_speed):
     predicted = predict_future_position(pos, target_pos, target_vel, max_speed)
     return seek(pos, vel, predicted, max_speed)
 
-def evade(pos, vel, threat_pos, threat_vel, max_speed):
+def evade(pos, vel, threat_pos, threat_vel, max_speed, threat_max_speed=None):
     """
     Predict the future position of a threat then flee from that point.
-    This is the inverse of pursue. Use the same prediction idea.
+    Uses threat_max_speed for the prediction time horizon if provided, 
+    preventing overshoot when the threat is much faster than the evader.
     """
-    predicted = predict_future_position(pos, threat_pos, threat_vel, max_speed)
+    # Use the threat's actual speed for predicting its future position
+    prediction_speed = threat_max_speed if threat_max_speed is not None else max_speed
+    
+    predicted = predict_future_position(pos, threat_pos, threat_vel, prediction_speed)
     return flee(pos, vel, predicted, max_speed)
 import random
 

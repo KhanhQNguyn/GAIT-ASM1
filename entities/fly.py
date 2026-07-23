@@ -187,9 +187,9 @@ class Fly:
                 else:
                     force = V2()
             else:
-                sep = boids_separation(self.pos, neighbors, sep_radius=settings.SEP_RADIUS)
-                coh = boids_cohesion(self.pos, neighbors)
-                ali = boids_alignment(self.vel, neighbors)
+                sep = boids_separation(self.pos, self.vel, neighbors, settings.SEP_RADIUS, FLY_SPEED)
+                coh = boids_cohesion(self.pos, self.vel, neighbors, FLY_SPEED)
+                ali = boids_alignment(self.vel, neighbors, FLY_SPEED)
                 force = sep * settings.SEP_WEIGHT + coh * settings.COH_WEIGHT + ali * settings.ALI_WEIGHT
 
             # Gentle anchor toward arena center to avoid drifting out of bounds
@@ -200,7 +200,7 @@ class Fly:
             self.vel += limit(force, 240.0) * dt
 
         elif self.state == FlyState.Fleeing:
-            force = evade(self.pos, self.vel, frog.pos, frog.vel, FLY_SPEED)
+            force = evade(self.pos, self.vel, frog.pos, frog.vel, FLY_SPEED, threat_max_speed=frog.speed)
 
             # Scale evade force by proximity — the closer the frog, the sharper the panic
             closeness = 1.0 - min(dist_to_frog, settings.FLEE_PANIC_RANGE) / settings.FLEE_PANIC_RANGE
@@ -213,7 +213,7 @@ class Fly:
             neighbors = neighbors if neighbors is not None else []
             self._debug_neighbors = neighbors
             if neighbors:
-                sep = boids_separation(self.pos, neighbors, sep_radius=settings.SEP_RADIUS)
+                sep = boids_separation(self.pos, self.vel, neighbors, settings.SEP_RADIUS, FLY_SPEED)
                 force += sep * settings.SEP_WEIGHT * 0.6
 
             # Anchor blend so the group does not disappear off screen
@@ -234,6 +234,7 @@ class Fly:
             effective_max_speed = FLY_SPEED * settings.CATCHUP_SPEED_MULT
         else:
             effective_max_speed = FLY_SPEED
+
         if self.vel.length() > effective_max_speed:
             self.vel.scale_to_length(effective_max_speed)
         self.pos += self.vel * dt

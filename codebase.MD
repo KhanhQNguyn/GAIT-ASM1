@@ -409,9 +409,19 @@ class Frog:
         for b in self.bubbles:
             b.draw(surf)
         
-        # Debug overlay when enabled (frog has no perception radius, show only velocity and "n/a")
+        # Debug overlay when enabled
         if debug_state.DEBUG:
             draw_debug_overlay(surf, self.pos, self.vel, [], "n/a")
+            
+            # Draw crosshair at target
+            pygame.draw.circle(surf, (200, 200, 200), self.target, 3)
+            pygame.draw.line(surf, (200, 200, 200), self.target - V2(8, 0), self.target + V2(8, 0), 1)
+            pygame.draw.line(surf, (200, 200, 200), self.target - V2(0, 8), self.target + V2(0, 8), 1)
+            
+            # Draw ARRIVE_SLOW_RADIUS and ARRIVE_STOP_RADIUS around the target
+            from settings import ARRIVE_SLOW_RADIUS, ARRIVE_STOP_RADIUS
+            pygame.draw.circle(surf, (255, 200, 100), self.target, ARRIVE_SLOW_RADIUS, 1)
+            pygame.draw.circle(surf, (255, 100, 100), self.target, ARRIVE_STOP_RADIUS, 1)
 </file>
 
 <file path="entities/snake.py">
@@ -479,11 +489,20 @@ class Snake:
         self._rng_seed = random.randint(0, 999999)
         self._avoid_angle = 0.0
 
+        # Debug overlay info
+        self._debug_target = None
+        self._debug_steer = V2()
+        self._debug_avoid = V2()
+
     def set_state(self, st):
         """Switch to a new FSM state and log the transition for debug overlay."""
         if st != self.state:
             debug_state.log_transition("Snake", id(self) % 1000, self.state.name, st.name)
         self.state = st
+        
+        # Start the confused timer immediately when entering the state
+        if self.state == SnakeState.Confused:
+            self.confused_timer = settings.SNAKE_CONFUSED_DURATION
 
     def update(self, dt, frog):
         """
@@ -503,15 +522,14 @@ class Snake:
             if dist < settings.AGGRO_RANGE:
                 self.set_state(SnakeState.Aggro)
 
-        elif self.state == SnakeState.Harmless:
-            # When harmless snake reaches home, enter Confused briefly then resume patrol
-            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
-                self.confused_timer = settings.SNAKE_CONFUSED_DURATION
-                self.set_state(SnakeState.Confused)
-
         elif self.state == SnakeState.Confused:
             self.confused_timer -= dt
             if self.confused_timer <= 0:
+                self.set_state(SnakeState.Harmless)
+
+        elif self.state == SnakeState.Harmless:
+            # Walk home, then resume patrol
+            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
                 self.set_state(SnakeState.PatrolAway)
 
         # ---------------- State behaviours ----------------
@@ -528,45 +546,57 @@ class Snake:
 
         if self.state == SnakeState.Aggro:
             self.color = (255, 150, 150)
-            # Predict where the frog will be, then let the corridor search pick the actual
-            # direction toward that point — avoidance has full authority when something is
-            # in the way, instead of being a weak add-on to a separately-computed chase force
             predicted = predict_future_position(self.pos, frog.pos, frog.vel, self.speed)
+            self._debug_target = predicted
             steer, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, predicted, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
+            self._debug_steer = steer
+            self._debug_avoid = V2() # seek_with_avoid blends natively
 
         elif self.state == SnakeState.PatrolAway:
             self.color = (180, 200, 255)
+            self._debug_target = self.patrol_point
             steer = arrive(self.pos, self.vel, self.patrol_point, self.speed)
+            self._debug_steer = steer
             if (self.patrol_point - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
                 self.set_state(SnakeState.PatrolHome)
             avoid_force, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, self.patrol_point, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            self._debug_avoid = avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            steer += self._debug_avoid
 
         elif self.state == SnakeState.PatrolHome:
             self.color = (180, 220, 180)
+            self._debug_target = self.home
             steer = arrive(self.pos, self.vel, self.home, self.speed)
+            self._debug_steer = steer
             if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
                 self.set_state(SnakeState.PatrolAway)
             avoid_force, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            self._debug_avoid = avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            steer += self._debug_avoid
 
         elif self.state == SnakeState.Harmless:
             self.color = (190, 180, 255)
+            self._debug_target = self.home
             steer = arrive(self.pos, self.vel, self.home, self.speed * settings.SNAKE_HARMLESS_SPEED_MULT)
+            self._debug_steer = steer
             avoid_force, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            self._debug_avoid = avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            steer += self._debug_avoid
 
         else:  # Confused
             self.color = (245, 210, 160)
+            self._debug_target = None
             steer = wander_force(self.vel, rng_seed=self._rng_seed)
+            self._debug_steer = steer
+            self._debug_avoid = V2()
 
         # Integrate velocity and update position
         self.vel = integrate_velocity(self.vel, steer, dt, self.speed)
@@ -609,12 +639,23 @@ class Snake:
         
         # Debug overlay when enabled
         if debug_state.DEBUG:
-            # Draw velocity vector, AGGRO_RANGE and DEAGGRO_RANGE, and state name
             perception_radii = [
-                (settings.AGGRO_RANGE, (255, 100, 100)),    # red for aggro range
-                (DEAGGRO_RANGE, (100, 100, 255))   # blue for deaggro range
+                (settings.AGGRO_RANGE, (255, 100, 100)),
+                (DEAGGRO_RANGE, (100, 100, 255))
             ]
             draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)
+            
+            # Draw individual forces
+            scale = 0.3
+            if self._debug_steer.length_squared() > 0.01:
+                pygame.draw.line(surf, (100, 255, 100), self.pos, self.pos + self._debug_steer * scale, 2) # Green for base steer
+            if self._debug_avoid.length_squared() > 0.01:
+                pygame.draw.line(surf, (255, 200, 100), self.pos, self.pos + self._debug_avoid * scale, 2) # Orange for avoid force
+                
+            # Draw marker at active target
+            if self._debug_target:
+                pygame.draw.line(surf, (255, 50, 50), self._debug_target - V2(6, 6), self._debug_target + V2(6, 6), 2)
+                pygame.draw.line(surf, (255, 50, 50), self._debug_target - V2(6, -6), self._debug_target + V2(6, -6), 2)
 </file>
 
 <file path="entities/fly.py">
@@ -807,9 +848,9 @@ class Fly:
                 else:
                     force = V2()
             else:
-                sep = boids_separation(self.pos, neighbors, sep_radius=settings.SEP_RADIUS)
-                coh = boids_cohesion(self.pos, neighbors)
-                ali = boids_alignment(self.vel, neighbors)
+                sep = boids_separation(self.pos, self.vel, neighbors, settings.SEP_RADIUS, FLY_SPEED)
+                coh = boids_cohesion(self.pos, self.vel, neighbors, FLY_SPEED)
+                ali = boids_alignment(self.vel, neighbors, FLY_SPEED)
                 force = sep * settings.SEP_WEIGHT + coh * settings.COH_WEIGHT + ali * settings.ALI_WEIGHT
 
             # Gentle anchor toward arena center to avoid drifting out of bounds
@@ -820,7 +861,7 @@ class Fly:
             self.vel += limit(force, 240.0) * dt
 
         elif self.state == FlyState.Fleeing:
-            force = evade(self.pos, self.vel, frog.pos, frog.vel, FLY_SPEED)
+            force = evade(self.pos, self.vel, frog.pos, frog.vel, FLY_SPEED, threat_max_speed=frog.speed)
 
             # Scale evade force by proximity — the closer the frog, the sharper the panic
             closeness = 1.0 - min(dist_to_frog, settings.FLEE_PANIC_RANGE) / settings.FLEE_PANIC_RANGE
@@ -833,7 +874,7 @@ class Fly:
             neighbors = neighbors if neighbors is not None else []
             self._debug_neighbors = neighbors
             if neighbors:
-                sep = boids_separation(self.pos, neighbors, sep_radius=settings.SEP_RADIUS)
+                sep = boids_separation(self.pos, self.vel, neighbors, settings.SEP_RADIUS, FLY_SPEED)
                 force += sep * settings.SEP_WEIGHT * 0.6
 
             # Anchor blend so the group does not disappear off screen
@@ -854,6 +895,7 @@ class Fly:
             effective_max_speed = FLY_SPEED * settings.CATCHUP_SPEED_MULT
         else:
             effective_max_speed = FLY_SPEED
+
         if self.vel.length() > effective_max_speed:
             self.vel.scale_to_length(effective_max_speed)
         self.pos += self.vel * dt
@@ -994,9 +1036,35 @@ def main():
         Returns a tuple of (world, frog, flies, snakes).
         """
         world = World(WIDTH, HEIGHT)
-        frog = Frog((WIDTH * 0.5, HEIGHT * 0.5), world.obstacles)
 
-        # Generate cluster centers
+        # Helper to push spawn/target points out of obstacles
+        def get_safe_point(x, y, radius):
+            p = V2(x, y)
+            for _ in range(5): # Iteratively push out of overlapping obstacles
+                hit = False
+                for rect in world.obstacles:
+                    if circle_rect_intersect(p, radius, rect):
+                        hit = True
+                        nearest = nearest_point_on_rect(p, rect)
+                        diff = p - nearest
+                        if diff.length_squared() > 0:
+                            p = nearest + diff.normalize() * (radius + 10)
+                        else:
+                            # Fallback push if perfectly centered
+                            p += V2(0, -1) * (radius + 10)
+                if not hit:
+                    break
+            
+            # Clamp the final point to ensure it wasn't pushed off-screen
+            p.x = max(radius, min(WIDTH - radius, p.x))
+            p.y = max(radius, min(HEIGHT - radius, p.y))
+            return p.x, p.y
+
+        # Spawn Frog safely
+        fx, fy = get_safe_point(WIDTH * 0.5, HEIGHT * 0.5, FROG_RADIUS)
+        frog = Frog((fx, fy), world.obstacles)
+
+        # Generate cluster centers for flies
         centers = []
         while len(centers) < FLY_CLUSTER_COUNT:
             cx = random.randint(60, WIDTH - 60)
@@ -1010,19 +1078,23 @@ def main():
             center = centers[i % FLY_CLUSTER_COUNT]
             radius = FLY_CLUSTER_SPAWN_RADIUS * math.sqrt(random.random())
             angle = random.uniform(0, 2 * math.pi)
-            fx = center.x + radius * math.cos(angle)
-            fy = center.y + radius * math.sin(angle)
-            fx = max(FLY_RADIUS + 4, min(WIDTH - (FLY_RADIUS + 4), fx))
-            fy = max(FLY_RADIUS + 4, min(HEIGHT - (FLY_RADIUS + 4), fy))
-            flies.append(Fly((fx, fy)))
+            fly_x = center.x + radius * math.cos(angle)
+            fly_y = center.y + radius * math.sin(angle)
+            fly_x = max(FLY_RADIUS + 4, min(WIDTH - (FLY_RADIUS + 4), fly_x))
+            fly_y = max(FLY_RADIUS + 4, min(HEIGHT - (FLY_RADIUS + 4), fly_y))
+            flies.append(Fly((fly_x, fly_y)))
 
-        # Create snakes with patrol points mirrored across the screen
+        # Create snakes with safely adjusted patrol and home points
         snakes = []
         for i in range(NUM_SNAKES):
             px = 140 + i * 320
             py = 120 if i % 2 == 0 else HEIGHT - 140
-            patrol = (WIDTH - px, HEIGHT - py)
-            snakes.append(Snake((px, py), patrol, world.obstacles))
+            
+            # Ensure both the spawn (home) point and the patrol point are safe
+            home_x, home_y = get_safe_point(px, py, SNAKE_RADIUS)
+            patrol_x, patrol_y = get_safe_point(WIDTH - px, HEIGHT - py, SNAKE_RADIUS)
+            
+            snakes.append(Snake((home_x, home_y), (patrol_x, patrol_y), world.obstacles))
 
         return world, frog, flies, snakes
 
@@ -1180,7 +1252,7 @@ def main():
                         if s.state == SnakeState.Aggro:
                             for _ in range(8):
                                 particles.append(Particle(s.pos, (200, 200, 255)))
-                            s.set_state(SnakeState.Harmless)
+                            s.set_state(SnakeState.Confused)
 
             # Bubbles also pop early if they hit an obstacle rect (optional per brief)
                 for b in frog.bubbles:
@@ -1198,7 +1270,7 @@ def main():
                         health -= 1
                         red_flash_timer = HURT_FLASH_DURATION
                         frog.start_hurt()
-                        s.set_state(SnakeState.Harmless)
+                        s.set_state(SnakeState.Confused)
                         if health <= 0:
                             game_over = True
                             win = False
@@ -1449,7 +1521,7 @@ ANCHOR_WEIGHT   = 0.6     # small pull to arena center to keep flock on screen
 CATCHUP_GROUP_DELTA  = 3     # how many more neighbors the other group needs to trigger catch-up
 CATCHUP_SPEED_MULT   = 1.6   # speed multiplier while hurrying to join a bigger group
 CATCHUP_WEIGHT       = 1.4   # steering weight while catching up
-CATCHUP_MAX_OWN_GROUP = 2    # only consider catch-up if my own group is this small or smaller
+CATCHUP_MAX_OWN_GROUP = 1    # only consider catch-up if my own group is this small or smaller
 COH_DEAD_ZONE_RADIUS  = 6.0  # boids cohesion: no pull if within this distance of flock center
 COH_SLOW_ZONE_RADIUS  = 30.0 # boids cohesion: full-strength pull begins beyond this distance
 
@@ -1542,12 +1614,7 @@ def flee(pos, vel, target, max_speed):
 def arrive(pos, vel, target, max_speed, slow_radius=ARRIVE_SLOW_RADIUS, stop_radius=ARRIVE_STOP_RADIUS):
     """
     Like seek when far, but slow down near the target.
-    Returns a steering force following the desired_velocity - current_velocity pattern.
-    Rules:
-      If distance < stop_radius, return a force that cancels leftover velocity
-      If distance < slow_radius, scale desired speed by distance / slow_radius
-      Otherwise use full speed
-    This removes overshoot and jitter around the target.
+    Uses a smoothstep curve in the slow zone for natural ease-in/ease-out deceleration.
     """
     d = target - pos
     dist = d.length()
@@ -1556,7 +1623,11 @@ def arrive(pos, vel, target, max_speed, slow_radius=ARRIVE_SLOW_RADIUS, stop_rad
         return -vel  # Cancel velocity to stop
     
     if dist < slow_radius:
-        desired_speed = max_speed * (dist / slow_radius)
+        # Smoothstep curve: t^2 * (3 - 2t)
+        t = dist / slow_radius
+        eased = t * t * (3.0 - 2.0 * t)
+        
+        desired_speed = max_speed * eased
         desired_vel = d.normalize() * desired_speed
     else:
         desired_vel = d.normalize() * max_speed
@@ -1597,13 +1668,9 @@ def integrate_velocity(vel, force, dt, max_speed):
 
 # ---------------- Boids components ----------------
 
-def boids_separation(me_pos, neighbors, sep_radius):
+def boids_separation(me_pos, me_vel, neighbors, sep_radius, max_speed):
     """
     Push away from neighbors that are too close.
-    neighbors: list of tuples (neighbor_pos, neighbor_vel)
-    Typical approach
-      For each neighbor inside sep_radius, add a vector pointing away with
-      magnitude inversely proportional to distance. Normalize at the end.
     """
     steering = V2()
     count = 0
@@ -1611,60 +1678,64 @@ def boids_separation(me_pos, neighbors, sep_radius):
         d = me_pos - n_pos
         dist = d.length()
         if 0 < dist < sep_radius:
-            steering += d.normalize() / dist  # Inverse proportional to distance
+            # Scale the repulsion so closer neighbors push harder
+            steering += d.normalize() * (sep_radius / dist)
             count += 1
+            
     if count > 0:
         steering /= count
-        if steering.length() > 0:
-            return limit(steering, 2.5)
+        # Calculate standard steering force
+        steering = steering.normalize() * max_speed
+        return steering - me_vel
+        
     return V2()
 
-def boids_cohesion(me_pos, neighbors, dead_zone_radius=COH_DEAD_ZONE_RADIUS, slow_zone_radius=COH_SLOW_ZONE_RADIUS):
+def boids_cohesion(me_pos, me_vel, neighbors, max_speed, dead_zone_radius=COH_DEAD_ZONE_RADIUS, slow_zone_radius=COH_SLOW_ZONE_RADIUS):
     """
-    Pull toward the average position of neighbors.
-    This mirrors arrive()'s slow/stop-radius idea, applied to a flocking force instead of a single target.
-    Typical approach
-      Compute the center of mass of neighbors then steer toward that point.
+    Pull toward the center of mass of neighbors.
     """
     if not neighbors:
         return V2()
+        
     avg_pos = V2()
     for n_pos, n_vel in neighbors:
         avg_pos += n_pos
-        
     avg_pos /= len(neighbors)
 
-    dist = (avg_pos - me_pos).length()
-    if dist < dead_zone_radius:
-        return V2()
-    elif dist < slow_zone_radius:
-        direction = (avg_pos - me_pos).normalize()
-        return direction * (dist / slow_zone_radius)
-    else:
-        direction = (avg_pos - me_pos).normalize()
-        return direction
+    target_vec = avg_pos - me_pos
+    dist = target_vec.length()
 
-def boids_alignment(me_vel, neighbors):
+    # Cancel out velocity if perfectly centered
+    if dist < dead_zone_radius:
+        return -me_vel * 0.5 
+        
+    # Scale desired speed similar to Arrive behavior
+    if dist < slow_zone_radius:
+        desired_speed = max_speed * (dist / slow_zone_radius)
+    else:
+        desired_speed = max_speed
+        
+    desired_vel = target_vec.normalize() * desired_speed
+    return desired_vel - me_vel
+
+def boids_alignment(me_vel, neighbors, max_speed):
     """
     Match the average velocity of neighbors.
-    Typical approach
-    Compute the average heading of neighbors then steer toward that heading.
     """
     if not neighbors:
         return V2()
+        
     avg_vel = V2()
     for n_pos, n_vel in neighbors:
         avg_vel += n_vel
     avg_vel /= len(neighbors)
 
-    diff = avg_vel - me_vel
-    if diff.length_squared() == 0:
+    if avg_vel.length_squared() == 0:
         return V2()
-    # Scale relative to a reference speed difference (60 px/s) so the result sits in
-    # roughly the same magnitude range as separation/cohesion, instead of the old fixed
-    # 0.1 factor which made alignment converge too slowly to ever look parallel.
-    norm = min(diff.length() / 60.0, 1.0)
-    return diff.normalize() * norm * ALI_STRENGTH
+
+    # The average velocity direction is our desired direction
+    desired_vel = avg_vel.normalize() * max_speed
+    return desired_vel - me_vel
 
 # ---------------- Obstacle avoidance blend ----------------
 
@@ -1754,12 +1825,16 @@ def pursue(pos, vel, target_pos, target_vel, max_speed):
     predicted = predict_future_position(pos, target_pos, target_vel, max_speed)
     return seek(pos, vel, predicted, max_speed)
 
-def evade(pos, vel, threat_pos, threat_vel, max_speed):
+def evade(pos, vel, threat_pos, threat_vel, max_speed, threat_max_speed=None):
     """
     Predict the future position of a threat then flee from that point.
-    This is the inverse of pursue. Use the same prediction idea.
+    Uses threat_max_speed for the prediction time horizon if provided, 
+    preventing overshoot when the threat is much faster than the evader.
     """
-    predicted = predict_future_position(pos, threat_pos, threat_vel, max_speed)
+    # Use the threat's actual speed for predicting its future position
+    prediction_speed = threat_max_speed if threat_max_speed is not None else max_speed
+    
+    predicted = predict_future_position(pos, threat_pos, threat_vel, prediction_speed)
     return flee(pos, vel, predicted, max_speed)
 import random
 

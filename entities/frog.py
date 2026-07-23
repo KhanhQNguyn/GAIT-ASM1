@@ -153,6 +153,16 @@ class Frog:
         for b in self.bubbles:
             b.draw(surf)
         
-        # Debug overlay when enabled (frog has no perception radius, show only velocity and "n/a")
+        # Debug overlay when enabled
         if debug_state.DEBUG:
             draw_debug_overlay(surf, self.pos, self.vel, [], "n/a")
+            
+            # Draw crosshair at target
+            pygame.draw.circle(surf, (200, 200, 200), self.target, 3)
+            pygame.draw.line(surf, (200, 200, 200), self.target - V2(8, 0), self.target + V2(8, 0), 1)
+            pygame.draw.line(surf, (200, 200, 200), self.target - V2(0, 8), self.target + V2(0, 8), 1)
+            
+            # Draw ARRIVE_SLOW_RADIUS and ARRIVE_STOP_RADIUS around the target
+            from settings import ARRIVE_SLOW_RADIUS, ARRIVE_STOP_RADIUS
+            pygame.draw.circle(surf, (255, 200, 100), self.target, ARRIVE_SLOW_RADIUS, 1)
+            pygame.draw.circle(surf, (255, 100, 100), self.target, ARRIVE_STOP_RADIUS, 1)

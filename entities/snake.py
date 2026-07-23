@@ -62,11 +62,20 @@ class Snake:
         self._rng_seed = random.randint(0, 999999)
         self._avoid_angle = 0.0
 
+        # Debug overlay info
+        self._debug_target = None
+        self._debug_steer = V2()
+        self._debug_avoid = V2()
+
     def set_state(self, st):
         """Switch to a new FSM state and log the transition for debug overlay."""
         if st != self.state:
             debug_state.log_transition("Snake", id(self) % 1000, self.state.name, st.name)
         self.state = st
+        
+        # Start the confused timer immediately when entering the state
+        if self.state == SnakeState.Confused:
+            self.confused_timer = settings.SNAKE_CONFUSED_DURATION
 
     def update(self, dt, frog):
         """
@@ -86,15 +95,14 @@ class Snake:
             if dist < settings.AGGRO_RANGE:
                 self.set_state(SnakeState.Aggro)
 
-        elif self.state == SnakeState.Harmless:
-            # When harmless snake reaches home, enter Confused briefly then resume patrol
-            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
-                self.confused_timer = settings.SNAKE_CONFUSED_DURATION
-                self.set_state(SnakeState.Confused)
-
         elif self.state == SnakeState.Confused:
             self.confused_timer -= dt
             if self.confused_timer <= 0:
+                self.set_state(SnakeState.Harmless)
+
+        elif self.state == SnakeState.Harmless:
+            # Walk home, then resume patrol
+            if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
                 self.set_state(SnakeState.PatrolAway)
 
         # ---------------- State behaviours ----------------
@@ -111,45 +119,57 @@ class Snake:
 
         if self.state == SnakeState.Aggro:
             self.color = (255, 150, 150)
-            # Predict where the frog will be, then let the corridor search pick the actual
-            # direction toward that point — avoidance has full authority when something is
-            # in the way, instead of being a weak add-on to a separately-computed chase force
             predicted = predict_future_position(self.pos, frog.pos, frog.vel, self.speed)
+            self._debug_target = predicted
             steer, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, predicted, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
+            self._debug_steer = steer
+            self._debug_avoid = V2() # seek_with_avoid blends natively
 
         elif self.state == SnakeState.PatrolAway:
             self.color = (180, 200, 255)
+            self._debug_target = self.patrol_point
             steer = arrive(self.pos, self.vel, self.patrol_point, self.speed)
+            self._debug_steer = steer
             if (self.patrol_point - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
                 self.set_state(SnakeState.PatrolHome)
             avoid_force, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, self.patrol_point, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            self._debug_avoid = avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            steer += self._debug_avoid
 
         elif self.state == SnakeState.PatrolHome:
             self.color = (180, 220, 180)
+            self._debug_target = self.home
             steer = arrive(self.pos, self.vel, self.home, self.speed)
+            self._debug_steer = steer
             if (self.home - self.pos).length() < settings.SNAKE_ARRIVE_THRESHOLD:
                 self.set_state(SnakeState.PatrolAway)
             avoid_force, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            self._debug_avoid = avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            steer += self._debug_avoid
 
         elif self.state == SnakeState.Harmless:
             self.color = (190, 180, 255)
+            self._debug_target = self.home
             steer = arrive(self.pos, self.vel, self.home, self.speed * settings.SNAKE_HARMLESS_SPEED_MULT)
+            self._debug_steer = steer
             avoid_force, self._avoid_angle = seek_with_avoid(
                 self.pos, self.vel, self.home, self.speed, self.radius, self.rects,
                 preferred_angle=self._avoid_angle)
-            steer += avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            self._debug_avoid = avoid_force * (1.0 if self._avoid_angle != 0.0 else avoid_weight)
+            steer += self._debug_avoid
 
         else:  # Confused
             self.color = (245, 210, 160)
+            self._debug_target = None
             steer = wander_force(self.vel, rng_seed=self._rng_seed)
+            self._debug_steer = steer
+            self._debug_avoid = V2()
 
         # Integrate velocity and update position
         self.vel = integrate_velocity(self.vel, steer, dt, self.speed)
@@ -192,9 +212,20 @@ class Snake:
         
         # Debug overlay when enabled
         if debug_state.DEBUG:
-            # Draw velocity vector, AGGRO_RANGE and DEAGGRO_RANGE, and state name
             perception_radii = [
-                (settings.AGGRO_RANGE, (255, 100, 100)),    # red for aggro range
-                (DEAGGRO_RANGE, (100, 100, 255))   # blue for deaggro range
+                (settings.AGGRO_RANGE, (255, 100, 100)),
+                (DEAGGRO_RANGE, (100, 100, 255))
             ]
             draw_debug_overlay(surf, self.pos, self.vel, perception_radii, self.state.name)
+            
+            # Draw individual forces
+            scale = 0.3
+            if self._debug_steer.length_squared() > 0.01:
+                pygame.draw.line(surf, (100, 255, 100), self.pos, self.pos + self._debug_steer * scale, 2) # Green for base steer
+            if self._debug_avoid.length_squared() > 0.01:
+                pygame.draw.line(surf, (255, 200, 100), self.pos, self.pos + self._debug_avoid * scale, 2) # Orange for avoid force
+                
+            # Draw marker at active target
+            if self._debug_target:
+                pygame.draw.line(surf, (255, 50, 50), self._debug_target - V2(6, 6), self._debug_target + V2(6, 6), 2)
+                pygame.draw.line(surf, (255, 50, 50), self._debug_target - V2(6, -6), self._debug_target + V2(6, -6), 2)
