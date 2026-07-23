@@ -40,32 +40,37 @@ class Particle:
             radius = max(1, int(5 * (1 - self.age / self.lifetime)))
             pygame.draw.circle(surf, self.color, self.pos, radius)
 
-class Slider:
-    def __init__(self, x, y, w, h, min_v, max_v, initial, label):
-        self.rect = pygame.Rect(x, y, w, h)
+class KeySlider:
+    def __init__(self, x, y, min_v, max_v, step, initial, label, key_dec, key_inc, key_names):
+        self.x = x
+        self.y = y
         self.min_v = min_v
         self.max_v = max_v
+        self.step = step
         self.val = initial
         self.label = label
-        self.dragging = False
+        self.key_dec = key_dec
+        self.key_inc = key_inc
+        self.key_names = key_names
 
     def handle_event(self, e):
-        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
-            if self.rect.collidepoint(e.pos):
-                self.dragging = True
-        elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
-            self.dragging = False
-        elif e.type == pygame.MOUSEMOTION:
-            if self.dragging:
-                rel_x = max(0, min(e.pos[0] - self.rect.x, self.rect.width))
-                self.val = self.min_v + (self.max_v - self.min_v) * (rel_x / self.rect.width)
+
+        if e.type == pygame.KEYDOWN:
+            if e.key == self.key_dec:
+                self.val = max(self.min_v, self.val - self.step)
+            elif e.key == self.key_inc:
+                self.val = min(self.max_v, self.val + self.step)
 
     def draw(self, surf, font):
-        pygame.draw.rect(surf, (100, 100, 100), self.rect)
-        rel_w = int((self.val - self.min_v) / (self.max_v - self.min_v) * self.rect.width)
-        pygame.draw.rect(surf, (200, 200, 200), (self.rect.x, self.rect.y, rel_w, self.rect.height))
-        txt = font.render(f"{self.label}: {self.val:.1f}", True, (255, 255, 255))
-        surf.blit(txt, (self.rect.x + self.rect.width + 10, self.rect.y))
+        txt = font.render(f"[{self.key_names}] {self.label}: {self.val:.1f}", True, (230, 230, 255))
+        bg_rect = txt.get_rect(topleft=(self.x, self.y))
+        bg_rect.inflate_ip(12, 6)
+        
+        bg_surf = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+        pygame.draw.rect(bg_surf, (0, 0, 0, 160), bg_surf.get_rect(), border_radius=4)
+        surf.blit(bg_surf, bg_rect.topleft)
+        
+        surf.blit(txt, (self.x, self.y))
 
 def resolve_fly_overlaps(flies, iterations=2):
     """
@@ -176,10 +181,10 @@ def main():
 
     import settings
     sliders = [
-        Slider(20, 100, 100, 20, 0.0, 5.0, settings.SEP_WEIGHT, "SEP_WEIGHT"),
-        Slider(20, 130, 100, 20, 0.0, 5.0, settings.COH_WEIGHT, "COH_WEIGHT"),
-        Slider(20, 160, 100, 20, 0.0, 5.0, settings.ALI_WEIGHT, "ALI_WEIGHT"),
-        Slider(20, 190, 100, 20, 50.0, 500.0, settings.AGGRO_RANGE, "AGGRO_RANGE"),
+        KeySlider(20, 100, 0.0, 5.0, 0.1, settings.SEP_WEIGHT, "SEP_WEIGHT", pygame.K_1, pygame.K_2, "1/2"),
+        KeySlider(20, 130, 0.0, 5.0, 0.1, settings.COH_WEIGHT, "COH_WEIGHT", pygame.K_3, pygame.K_4, "3/4"),
+        KeySlider(20, 160, 0.0, 5.0, 0.1, settings.ALI_WEIGHT, "ALI_WEIGHT", pygame.K_5, pygame.K_6, "5/6"),
+        KeySlider(20, 190, 50.0, 500.0, 10.0, settings.AGGRO_RANGE, "AGGRO_RANGE", pygame.K_7, pygame.K_8, "7/8"),
     ]
 
     DEFAULT_SLIDER_VALS = [sl.val for sl in sliders]
@@ -325,6 +330,8 @@ def main():
                         if s.state == SnakeState.Aggro:
                             for _ in range(8):
                                 particles.append(Particle(s.pos, (200, 200, 255)))
+                            # Transition exactly as required: Aggro -> Harmless -> Confused
+                            s.set_state(SnakeState.Harmless)
                             s.set_state(SnakeState.Confused)
 
             # Bubbles also pop early if they hit an obstacle rect (optional per brief)
@@ -343,7 +350,8 @@ def main():
                         health -= 1
                         red_flash_timer = HURT_FLASH_DURATION
                         frog.start_hurt()
-                        s.set_state(SnakeState.Confused)
+                        s.set_state(SnakeState.Harmless)
+                        
                         if health <= 0:
                             game_over = True
                             win = False
@@ -415,12 +423,12 @@ def main():
                 hud_txt = font.render(f"Pursue closing speed: {avg_close_speed:.1f} px/s", True, (255, 150, 150))
                 screen.blit(hud_txt, (20, 220))
 
-            # Live FSM transition log — bottom-left corner, most recent at bottom
-            # log_y_start = HEIGHT - 20 - len(debug_state.TRANSITION_LOG) * 22
-            # for i, (ts, kind, idx, old_st, new_st) in enumerate(debug_state.TRANSITION_LOG):
-            #     entry = f"{ts} {kind}#{idx} {old_st} -> {new_st}"
-            #     log_surf = font.render(entry, True, (200, 230, 200))
-            #     screen.blit(log_surf, (16, log_y_start + i * 22))
+            #-- Transition log (bottom-left corner) ---
+            log_y_start = HEIGHT - 20 - len(debug_state.TRANSITION_LOG) * 22
+            for i, (ts, kind, idx, old_st, new_st) in enumerate(debug_state.TRANSITION_LOG):
+                entry = f"{ts} {kind}#{idx} {old_st} -> {new_st}"
+                log_surf = font.render(entry, True, (200, 230, 200))
+                screen.blit(log_surf, (16, log_y_start + i * 22))
 
             # --- Stats panel (top-right corner) ---
             # fps_val   = clock.get_fps()

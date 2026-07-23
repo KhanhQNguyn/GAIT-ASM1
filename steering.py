@@ -282,11 +282,22 @@ def arrive_with_avoid(pos, vel, target, max_speed, radius, rects, preferred_angl
 def predict_future_position(pos, target_pos, target_vel, max_speed):
     """
     Shared prediction helper used by pursue(), evade(), and Aggro's unified
-    seek_with_avoid call. Returns the predicted future position of a moving target.
+    seek_with_avoid call.
+    Refined: Sử dụng tổng tốc độ tiếp cận để tính time_horizon chính xác hơn.
     """
-    small_eps = 1e-6
     distance = (target_pos - pos).length()
-    time_horizon = min(distance / (max_speed + small_eps), 2.0)
+    target_speed = target_vel.length()
+    
+    # Nếu mục tiêu gần như đang đứng im, không cần dự đoán tương lai
+    if target_speed < 5.0:
+        return target_pos
+        
+    # Tính tổng tốc độ tiếp cận để xác định thời gian gặp nhau thực tế
+    closing_speed = max_speed + target_speed
+    
+    # Giảm cap xuống 1.5 giây để các pha rượt đuổi ở cự ly xa không bị nội suy quá đà
+    time_horizon = min(distance / closing_speed, 1.5)
+    
     return target_pos + target_vel * time_horizon
 
 def pursue(pos, vel, target_pos, target_vel, max_speed):
