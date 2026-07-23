@@ -100,9 +100,8 @@ class Fly:
                     burst_dir = V2(0, -1)
                 self.vel += burst_dir * settings.FLEE_BURST_STRENGTH
             else:
-                # Only genuinely isolated flies (no nearby flockmates) should idle out —
-                # otherwise nearly the whole population idles any time the frog is elsewhere
-                if dist_to_frog > IdleDistance and not has_nearby_flockmate:
+                # Chuyển sang Idle khi ở xa Ếch (Áp dụng cho toàn bộ bầy)
+                if dist_to_frog > IdleDistance:
                     self.idle_timer += dt
                     if self.idle_timer >= IdleDelay:
                         self._set_state(FlyState.Idle)
@@ -130,7 +129,8 @@ class Fly:
                 else:
                     burst_dir = V2(0, -1)
                 self.vel += burst_dir * settings.FLEE_BURST_STRENGTH
-            elif dist_to_frog <= IdleDistance or has_nearby_flockmate:
+            # Chỉ thức tỉnh và quay lại Flock khi Ếch tiến lại gần
+            elif dist_to_frog <= IdleDistance:
                 self._set_state(FlyState.Flock)
                 self.idle_timer = 0.0
 
@@ -228,7 +228,7 @@ class Fly:
             self.vel += limit(force, 420.0) * dt
 
         elif self.state == FlyState.Idle:
-            force = wander_force(self.vel, rng_seed=self._rng_seed)
+            force = wander_force(self.vel, FLY_SPEED, rng_seed=self._rng_seed)
             self.vel += limit(force, 120.0) * dt
             self.vel *= 0.98  # mild damping so idle feels soft
 

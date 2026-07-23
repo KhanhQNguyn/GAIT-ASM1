@@ -161,7 +161,7 @@ class Snake:
         else:  # Confused
             self.color = (245, 210, 160)
             self._debug_target = None
-            steer = wander_force(self.vel, rng_seed=self._rng_seed)
+            steer = wander_force(self.vel, self.speed, rng_seed=self._rng_seed)
             self._debug_steer = steer
             self._debug_avoid = V2()
 

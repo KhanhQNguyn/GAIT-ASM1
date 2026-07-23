@@ -51,7 +51,7 @@ FLY_SCARED_RANGE      = 160.0   # frog proximity that triggers Fleeing
 FLY_BUBBLE_FLEE_RANGE = 140.0   # bubble proximity that triggers Fleeing
 FLY_CALM_RANGE        = 220.0   # frog and bubbles must both clear this to start calming
 FLY_IDLE_DISTANCE     = 380.0   # frog distance beyond which an isolated fly may idle
-FLY_IDLE_DELAY        = 2.0     # seconds of isolation+distance before entering Idle
+FLY_IDLE_DELAY        = 10     # seconds of isolation+distance before entering Idle
 FLY_SCARE_TIMER       = 0.6     # seconds a fly stays nervous after the last scare
 
 # Boids neighborhood and weights

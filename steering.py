@@ -315,13 +315,12 @@ def evade(pos, vel, threat_pos, threat_vel, max_speed, threat_max_speed=None):
     return flee(pos, vel, predicted, max_speed)
 import random
 
-def wander_force(me_vel, jitter_deg=12.0, circle_distance=24.0, circle_radius=18.0, rng_seed=None):
+def wander_force(me_vel, max_speed, jitter_deg=12.0, circle_distance=24.0, circle_radius=18.0, rng_seed=None):
     """
     Return a small random steering vector for gentle drift.
     Classic wander
       Project a small circle ahead along current heading, then jitter the
       target point on that circle by a tiny random angle each update.
-    Use this for Fly Idle and Snake Confused.
     """
     if not hasattr(wander_force, "_state"):
         wander_force._state = {}
@@ -345,8 +344,15 @@ def wander_force(me_vel, jitter_deg=12.0, circle_distance=24.0, circle_radius=18
         heading = me_vel.normalize()
         
     circle_center = heading * circle_distance
+    
     displacement = V2(circle_radius, 0).rotate(state['angle'])
     
-    desired = circle_center + displacement
-    return desired - me_vel
+    wander_dir = circle_center + displacement
+    
+    if wander_dir.length_squared() > 0:
+        desired_vel = wander_dir.normalize() * max_speed
+    else:
+        desired_vel = V2()
+        
+    return desired_vel - me_vel
 
